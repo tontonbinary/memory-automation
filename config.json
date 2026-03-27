@@ -1,8 +1,8 @@
 {
   "skill_name": "memory-automation",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "public",
-  "description": "记忆自动化 Skill，实现会话内容的智能蒸馏与持久化存储",
+  "description": "记忆自动化 Skill，实现会话内容的智能蒸馏与持久化存储（Agent 自蒸馏模式，无需 API Key）",
   "agent_id": "code",
   "triggers": {
     "manual": {
@@ -17,7 +17,7 @@
     },
     "heartbeat": {
       "enabled": true,
-      "interval_minutes": 30
+      "interval_minutes": 240
     }
   },
   "paths": {
@@ -30,5 +30,18 @@
     "max_messages_per_distill": 50,
     "min_message_length": 10
   },
-  "entry_point": "memory/automation.py"
+  "llm": {
+    "enabled": false,
+    "provider": "minimax",
+    "model": "MiniMax-Text-01",
+    "api_endpoint": "https://api.minimax.chat/v1/text/chatcompletion_v2",
+    "temperature": 0.3,
+    "max_tokens": 4000,
+    "timeout": 60,
+    "stream": false,
+    "api_key": null
+  },
+  "fallback_to_regex": true,
+  "entry_point": "memory/automation.py",
+  "agent_self_distill": true
 }
