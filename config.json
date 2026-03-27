@@ -1,0 +1,34 @@
+{
+  "skill_name": "memory-automation",
+  "version": "1.0.0",
+  "type": "public",
+  "description": "记忆自动化 Skill，实现会话内容的智能蒸馏与持久化存储",
+  "agent_id": "code",
+  "triggers": {
+    "manual": {
+      "enabled": true,
+      "keywords": ["记住", "记忆", "distill", "distillation", "TODO", "暂存", "搁置", "先记录", "以后再聊", "记一下"],
+      "case_sensitive": false
+    },
+    "agent_promise": {
+      "enabled": true,
+      "keywords": ["好，记到", "已记录到", "我会记住", "好，我记到", "已记到", "会记下来"],
+      "case_sensitive": false
+    },
+    "heartbeat": {
+      "enabled": true,
+      "interval_minutes": 30
+    }
+  },
+  "paths": {
+    "l1_template": "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md",
+    "state_file": "memory/heartbeat-state.json",
+    "memory_rules": "~/.openclaw/memory-rules.md"
+  },
+  "distillation": {
+    "extract_types": ["event", "decision", "preference", "emotion", "action"],
+    "max_messages_per_distill": 50,
+    "min_message_length": 10
+  },
+  "entry_point": "memory/automation.py"
+}

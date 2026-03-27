@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.log
+memory/
+!memory/__init__.py
+!memory/*.py
