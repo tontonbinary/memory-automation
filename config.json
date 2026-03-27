@@ -7,7 +7,7 @@
   "triggers": {
     "manual": {
       "enabled": true,
-      "keywords": ["记住", "记忆", "distill", "distillation", "TODO", "暂存", "搁置", "先记录", "以后再聊", "记一下"],
+      "keywords": ["记住", "记忆", "distill", "distillation", "TODO", "暂存", "搁置", "先记录", "以后再聊", "记一下", "忘了吗"],
       "case_sensitive": false
     },
     "agent_promise": {
