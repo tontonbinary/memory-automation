@@ -24,6 +24,7 @@
 3. **Preference** - 用户偏好（喜欢、偏好、想要）
 4. **Emotion** - 情绪表达（感谢、焦虑、兴奋）
 5. **Action** - 后续行动（下一步、去做、记得）
+6. **Improve** - 用户纠正/改进（认知纠正、规则修正、错误修正）
 
 ## 蒸馏规则
 
@@ -40,7 +41,7 @@
 
 ### 标签体系
 - **角色**: #user #assistant
-- **类型**: #event #decision #preference #emotion #action
+- **类型**: #event #decision #preference #emotion #action #improve
 - **主题**: #coding #meeting #question #completed #planning
 
 ## Heartbeat 规则
