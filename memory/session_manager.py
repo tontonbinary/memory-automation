@@ -116,13 +116,13 @@ class SessionManager:
                 return session_key, all_messages, last_msg_id
 
         except subprocess.TimeoutExpired:
-            print("[SessionManager] 获取会话超时")
-            return "", [], None
+            print("[SessionManager] ⚠️ 获取会话超时，请检查网络或 openclaw 服务")
+            return "", [], None  # 保持兼容，但日志已改进
         except json.JSONDecodeError as e:
-            print(f"[SessionManager] 解析 JSON 失败: {e}")
+            print(f"[SessionManager] ❌ 解析 JSON 失败: {e}，请检查 session 文件格式")
             return "", [], None
         except Exception as e:
-            print(f"[SessionManager] 获取会话异常: {e}")
+            print(f"[SessionManager] ❌ 获取会话异常: {e}")
             return "", [], None
 
     def _get_sessions_dir(self) -> Path:
