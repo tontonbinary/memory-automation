@@ -17,7 +17,7 @@
     },
     "heartbeat": {
       "enabled": true,
-      "interval_minutes": 240
+      "interval_minutes": 30
     }
   },
   "paths": {
