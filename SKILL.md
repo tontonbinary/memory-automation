@@ -4,6 +4,7 @@ type: public  # 公用 skill（所有 agent 可用）
 description: |
   记忆自动化 Skill，实现会话内容的智能蒸馏与持久化存储。
   支持手动触发（关键词"记住""记忆"）和 Heartbeat 自动触发（每30分钟）。
+  注意：每次调用必须指定 --agent 参数，指定当前 agent 的 ID。
 triggers:
   manual:
     - keywords: ["记住", "记忆", "distill", "distillation"]
@@ -30,21 +31,36 @@ entry_points:
 1. **手动记忆**：用户说"记住"或"记忆"时，自动蒸馏当前会话内容并写入 L1 存储
 2. **自动记忆**：每30分钟检测会话变化，自动处理并记录
 
+## 调用方式
+
+### 命令行参数
+
+```bash
+# 手动触发
+python3 -m memory.automation manual --agent <agent_id>
+
+# 心跳触发
+python3 -m memory.automation heartbeat --agent <agent_id>
+```
+
+### HEARTBEAT 配置
+
+每个 agent 的 HEARTBEAT.md 必须包含 --agent 参数：
+
+```bash
+# 示例：code agent 的 HEARTBEAT.md
+cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbeat --agent code
+```
+
+### agent_id 说明
+
+| agent | agent_id |
+|-------|----------|
+| code | code |
+| xiaoxian | xiaoxian |
+| TS | TS |
+
 ## 目录结构
-
-```
-~/.openclaw/skills/memory-automation/
-├── SKILL.md                 # 本文件
-├── config.json              # 配置
-├── memory/
-│   ├── __init__.py
-│   ├── state_manager.py     # 状态管理
-│   ├── session_distiller.py # 会话蒸馏
-│   └── automation.py        # 主逻辑
-└── README.md                # 使用说明
-```
-
-## L1 存储格式
 
 ```markdown
 ## {时间戳}

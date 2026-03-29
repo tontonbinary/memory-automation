@@ -76,19 +76,19 @@
     "min_message_length": 10
   },
   "llm": {
-    "enabled": false,
+    "enabled": true,
     "provider": "minimax",
-    "model": "MiniMax-Text-01",
+    "model": "MiniMax-M2.7",
     "api_endpoint": "https://api.minimax.chat/v1/text/chatcompletion_v2",
     "temperature": 0.3,
     "max_tokens": 4000,
     "timeout": 60,
     "stream": false,
-    "api_key": null,
+    "api_key": "YOUR_API_KEY_REMOVED",
     "api_key_asked": true
   },
   "regex": {
-    "count": 1,
+    "count": 16,
     "count_asked": false
   },
   "fallback_to_regex": true,

@@ -36,6 +36,7 @@ class MemoryAutomation:
             agent_id: Agent ID（可选，未传入时自动检测）
             config_path: 配置文件路径（可选）
         """
+        # 不自动 fallback，保留 None 表示未检测到
         self.agent_id = agent_id or self._detect_agent_id()
         self.config = self._load_config(config_path)
 
@@ -85,6 +86,22 @@ class MemoryAutomation:
             return env_agent
 
         # 2. 从 workspace 路径推断
+        # 检查 HOME 环境变量对应的 workspace
+        try:
+            home = Path.home()
+            # 检查 ~/.openclaw/workspaces/{agent}/workspace/memory/ 是否存在（当前 agent 的 memory 目录）
+            memory_base = home / ".openclaw" / "workspaces"
+            if memory_base.exists():
+                for agent_dir in memory_base.iterdir():
+                    memory_dir = agent_dir / "workspace" / "memory"
+                    if memory_dir.exists() and memory_dir.is_dir():
+                        # 检查是否有最新的 pending_queue 或 session 文件
+                        # 这个 agent 可能是当前的
+                        pass
+        except Exception:
+            pass
+
+        # 3. 从当前工作目录推断
         try:
             cwd = os.getcwd()
             # 匹配路径模式: ~/.openclaw/workspaces/{agent}/workspace/
@@ -96,22 +113,34 @@ class MemoryAutomation:
         except Exception:
             pass
 
-        # 3. 从 OpenClaw 配置读取默认 agent
+        # 4. 从 HEARTBEAT 所在的 workspace 目录推断
+        # heartbeat 运行时的 cwd 可能是 skill 目录
+        # 但可以尝试从 HOME 推断
         try:
-            config_file = Path("~/.openclaw/config.json").expanduser()
-            if config_file.exists():
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    default_agent = config.get("defaultAgent") or config.get("agent")
-                    if default_agent:
-                        print(f"[MemoryAutomation] 从 config 获取 agent_id: {default_agent}")
-                        return default_agent
+            home = Path.home()
+            # 检查哪个 workspace 的 HEARTBEAT.md 最近被读取了
+            # 或者直接检查所有 workspace 的 memory 目录的修改时间
+            memory_base = home / ".openclaw" / "workspaces"
+            latest_agent = None
+            latest_time = 0
+            for agent_dir in memory_base.iterdir():
+                if agent_dir.is_dir():
+                    memory_dir = agent_dir / "workspace" / "memory"
+                    if memory_dir.exists():
+                        # 检查 memory 目录的修改时间
+                        mtime = memory_dir.stat().st_mtime
+                        if mtime > latest_time:
+                            latest_time = mtime
+                            latest_agent = agent_dir.name
+            if latest_agent:
+                print(f"[MemoryAutomation] 从最近访问的 workspace/memory 获取 agent_id: {latest_agent}")
+                return latest_agent
         except Exception:
             pass
 
-        # 4. fallback 默认值
-        print("[MemoryAutomation] 使用默认 agent_id: code")
-        return "code"
+        # 5. 无法检测，返回 None（不 fallback）
+        print("[MemoryAutomation] 无法检测 agent_id")
+        return None
 
     def _load_config(self, config_path: Optional[str]) -> Dict[str, Any]:
         """加载配置"""
@@ -169,6 +198,38 @@ class MemoryAutomation:
         """确保 L1 存储目录存在"""
         l1_path = self._get_l1_path()
         l1_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write_activation_flag(self, message: str = "Mauto 需要激活，请运行 'mauto activate' 或让用户触发一次 Mauto") -> Path:
+        """
+        写入激活标记文件，供 agent 检测并通知用户
+
+        Args:
+            message: 激活提示信息
+        """
+        if not self.agent_id:
+            return None
+
+        flag_dir = Path.home() / ".openclaw" / "workspaces" / self.agent_id / "workspace" / "memory"
+        flag_dir.mkdir(parents=True, exist_ok=True)
+        flag_path = flag_dir / ".mauto_activation_needed"
+
+        with open(flag_path, 'w', encoding='utf-8') as f:
+            f.write(f"{message}\n")
+            f.write(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+        print(f"[MemoryAutomation] 激活标记已写入: {flag_path}")
+        return flag_path
+
+    def clear_activation_flag(self) -> bool:
+        """清除激活标记"""
+        if not self.agent_id:
+            return False
+
+        flag_path = Path.home() / ".openclaw" / "workspaces" / self.agent_id / "workspace" / "memory" / ".mauto_activation_needed"
+        if flag_path.exists():
+            flag_path.unlink()
+            return True
+        return False
 
     # === 委托给 session_manager ===
 
@@ -391,6 +452,20 @@ class MemoryAutomation:
         Returns:
             处理结果
         """
+        # 无 agent_id → 报错提示
+        if not self.agent_id:
+            detected = self._detect_agent_id()
+            result = {
+                "triggered": False,
+                "reason": f"agent_id 未指定，请在调用时加 --agent 参数（例如 --agent {detected or 'your_agent_id'}）",
+                "items_distilled": 0,
+                "lines_written": 0,
+                "error": "agent_id_required"
+            }
+            print(f"[MemoryAutomation] 错误: agent_id 未指定")
+            print(f"[MemoryAutomation] 请在调用时加 --agent 参数")
+            return result
+
         result = {
             "triggered": False,
             "reason": "",
@@ -536,9 +611,25 @@ class MemoryAutomation:
         - 检测到 session_key 变化时，先处理旧 session 的未蒸馏消息
         - 避免因 session 切换导致消息遗漏
 
+        无 agent_id 时：
+        - 写入激活标记，跳过主逻辑
+        - 由 agent 通知用户激活
+
         Returns:
             处理结果
         """
+        # 无 agent_id → 跳过执行，写入激活标记
+        if not self.agent_id:
+            result = {
+                "triggered": False,
+                "reason": "agent_id 未指定，跳过执行",
+                "pending_count": 0,
+                "activation_needed": True
+            }
+            print("[MemoryAutomation] Heartbeat 触发但无 agent_id，写入激活标记")
+            self.write_activation_flag()
+            return result
+
         result = {
             "triggered": False,
             "reason": "",
@@ -630,24 +721,28 @@ class MemoryAutomation:
 def main():
     """主入口函数"""
     if len(sys.argv) < 2:
-        print("用法: python -m memory.automation [manual|heartbeat] [--session <session_file>]")
+        print("用法: python -m memory.automation [manual|heartbeat] [--agent <agent_id>] [--session <session_file>]")
         print("  manual    - 手动触发记忆蒸馏")
         print("  heartbeat - Heartbeat 触发记忆蒸馏")
+        print("  --agent <id> - 指定 agent ID（必需）")
         print("  --session <file> - 指定要处理的 session 文件（绝对路径）")
-        print("  示例: python -m memory.automation manual --session /path/to/session.reset.jsonl")
+        print("  示例: python -m memory.automation manual --agent code")
+        print("  示例: python -m memory.automation heartbeat --agent xiaoxian")
         sys.exit(1)
 
     mode = sys.argv[1].lower()
 
     # 解析可选参数
     session_file = None
+    agent_id = None
     for i in range(2, len(sys.argv)):
         if sys.argv[i] == "--session" and i + 1 < len(sys.argv):
             session_file = sys.argv[i + 1]
-            break
+        elif sys.argv[i] == "--agent" and i + 1 < len(sys.argv):
+            agent_id = sys.argv[i + 1]
 
-    # 创建自动化实例（agent_id 会自动检测）
-    automation = MemoryAutomation()
+    # 创建自动化实例
+    automation = MemoryAutomation(agent_id=agent_id)
 
     if mode == "manual":
         # 手动模式 - 可以尝试从环境变量获取用户消息
@@ -655,6 +750,9 @@ def main():
         result = automation.run_manual(user_message, session_file=session_file)
 
         print(f"\n[结果] {result['reason']}")
+        if result.get('error') == 'agent_id_required':
+            print(f"[错误] 请在调用时添加 --agent 参数")
+            sys.exit(1)
         if result['triggered']:
             print(f"  - 蒸馏项: {result['items_distilled']}")
             print(f"  - 写入行: {result['lines_written']}")
@@ -666,7 +764,10 @@ def main():
         result = automation.run_heartbeat()
 
         # 输出结果（Agent 会解析这个输出）
-        if result['triggered'] and result['pending_count'] > 0:
+        if result.get('activation_needed'):
+            print(f"\n[MemoryAutomation] {result['reason']}")
+            print(f"[MemoryAutomation] 请在 HEARTBEAT.md 中添加 --agent 参数")
+        elif result['triggered'] and result['pending_count'] > 0:
             print(f"\n[MemoryAutomation] 发现 {result['pending_count']} 条新消息待蒸馏")
             print(f"请检查 memory/pending_queue.json 并进行 LLM 蒸馏")
         else:
