@@ -172,16 +172,8 @@ class SessionManager:
                     base = name.replace(".jsonl.reset.", ".").replace(".jsonl.bak", "")
                     if base == old_session_key or name.startswith(f"{old_session_key}."):
                         found_files.append(f)
-                # 匹配所有 .jsonl 文件（排除所有 reset 版本），然后检查内容中的 session_key
-                elif name.endswith(".jsonl") and ".reset." not in name and not name.endswith(".bak"):
-                    # 读取文件检查 session_key
-                    try:
-                        with open(f, 'r', encoding='utf-8') as fh:
-                            first_line = fh.readline()
-                            if old_session_key in first_line:
-                                found_files.append(f)
-                    except Exception:
-                        continue
+                # 注意：不支持通过读取文件内容来匹配 session_key
+                # session_key 必须是文件名的一部分（精确匹配、前缀匹配、或 reset 文件模式）
 
         print(f"[SessionManager] 查找旧 session {old_session_key} -> 找到 {len(found_files)} 个文件: {[str(f) for f in found_files]}")
         return found_files
