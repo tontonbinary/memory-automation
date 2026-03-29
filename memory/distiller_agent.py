@@ -59,7 +59,17 @@ class DistillerAgent:
         EMOTION_NEGATIVE = ["着急", "焦虑", "担心", "困惑", "麻烦", "头痛", "糟糕", "错误", "失败", "烦"]
 
         for msg in messages:
-            content = msg.get("content", "").strip()
+            # content 可能是 list（富文本格式）或 string，需要统一处理
+            raw_content = msg.get("content", "")
+            if isinstance(raw_content, list):
+                # 富文本格式：提取所有 text 字段
+                content = " ".join(
+                    item.get("text", "") for item in raw_content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                )
+            else:
+                content = str(raw_content)
+            content = content.strip()
             role = msg.get("role", "unknown")
             timestamp = msg.get("timestamp", "")
             msg_id = msg.get("msg_id", "")
