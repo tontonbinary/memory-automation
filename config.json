@@ -1,4 +1,24 @@
 {
+  "trigger_keywords": [
+    "记住",
+    "记忆",
+    "distill",
+    "distillation"
+  ],
+  "pattern_keywords": [
+    "我喜欢",
+    "我希望",
+    "我觉得",
+    "以后都",
+    "我想要",
+    "忘了吗"
+  ],
+  "heartbeat_interval_minutes": 30,
+  "state_file": "memory/heartbeat-state.json",
+  "memory_rules": "~/.openclaw/memory-rules.md",
+  "min_message_length": 10,
+  "l1_history_days": 7,
+  "pattern_threshold": 3,
   "skill_name": "memory-automation",
   "version": "2.0.0",
   "type": "public",
@@ -7,12 +27,31 @@
   "triggers": {
     "manual": {
       "enabled": true,
-      "keywords": ["记住", "记忆", "distill", "distillation", "TODO", "暂存", "搁置", "先记录", "以后再聊", "记一下", "忘了吗"],
+      "keywords": [
+        "记住",
+        "记忆",
+        "distill",
+        "distillation",
+        "TODO",
+        "暂存",
+        "搁置",
+        "先记录",
+        "以后再聊",
+        "记一下",
+        "忘了吗"
+      ],
       "case_sensitive": false
     },
     "agent_promise": {
       "enabled": true,
-      "keywords": ["好，记到", "已记录到", "我会记住", "好，我记到", "已记到", "会记下来"],
+      "keywords": [
+        "好，记到",
+        "已记录到",
+        "我会记住",
+        "好，我记到",
+        "已记到",
+        "会记下来"
+      ],
       "case_sensitive": false
     },
     "heartbeat": {
@@ -26,7 +65,13 @@
     "memory_rules": "~/.openclaw/memory-rules.md"
   },
   "distillation": {
-    "extract_types": ["event", "decision", "preference", "emotion", "action"],
+    "extract_types": [
+      "event",
+      "decision",
+      "preference",
+      "emotion",
+      "action"
+    ],
     "max_messages_per_distill": 50,
     "min_message_length": 10
   },
@@ -39,9 +84,15 @@
     "max_tokens": 4000,
     "timeout": 60,
     "stream": false,
-    "api_key": null
+    "api_key": null,
+    "api_key_asked": true
+  },
+  "regex": {
+    "count": 1,
+    "count_asked": false
   },
   "fallback_to_regex": true,
   "entry_point": "memory/automation.py",
-  "agent_self_distill": true
+  "agent_self_distill": true,
+  "l1_template": "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md"
 }

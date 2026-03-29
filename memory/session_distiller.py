@@ -301,21 +301,30 @@ class SessionDistiller:
                     return None
                     
         except urllib.error.HTTPError as e:
-            print(f"[SessionDistiller] LLM API HTTP 错误: {e.code} - {e.reason}")
+            error_code = e.code
+            if error_code in [401, 403]:
+                print("[MEMORY-AUTOMATION] API_ERROR: API_KEY_INVALID")
+            elif error_code == 429:
+                print("[MEMORY-AUTOMATION] API_ERROR: API_RATE_LIMITED")
+            else:
+                print(f"[MEMORY-AUTOMATION] API_ERROR: HTTP_{error_code}")
             try:
                 error_body = e.read().decode('utf-8')
-                print(f"[SessionDistiller] 错误详情: {error_body}")
+                print(f"[SessionDistiller] 错误详情: {error_body[:200]}")
             except:
                 pass
             return None
         except urllib.error.URLError as e:
-            print(f"[SessionDistiller] LLM API 连接错误: {e.reason}")
+            print("[MEMORY-AUTOMATION] API_ERROR: API_CONNECTION_ERROR")
+            print(f"[SessionDistiller] 错误详情: {e.reason}")
             return None
         except json.JSONDecodeError as e:
-            print(f"[SessionDistiller] LLM API 响应解析失败: {e}")
+            print(f"[MEMORY-AUTOMATION] API_ERROR: API_RESPONSE_PARSE_ERROR")
+            print(f"[SessionDistiller] 错误详情: {e}")
             return None
         except Exception as e:
-            print(f"[SessionDistiller] LLM API 调用异常: {e}")
+            print(f"[MEMORY-AUTOMATION] API_ERROR: {type(e).__name__}")
+            print(f"[SessionDistiller] 错误详情: {e}")
             return None
     
     def _parse_llm_response(self, response: str) -> List[Dict[str, Any]]:

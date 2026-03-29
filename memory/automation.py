@@ -151,6 +151,16 @@ class MemoryAutomation:
 
         return default_config
 
+    def _save_config(self) -> None:
+        """保存配置到文件"""
+        skill_dir = Path(__file__).parent.parent
+        config_file = skill_dir / "config.json"
+        try:
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=2, ensure_ascii=False)
+        except IOError as e:
+            print(f"[MemoryAutomation] 保存配置失败: {e}")
+
     def _get_l1_path(self) -> Path:
         """获取当前 L1 文件路径（委托给 l1_writer）"""
         return self.l1_writer._get_l1_path()
@@ -370,8 +380,48 @@ class MemoryAutomation:
             self.state_manager.update_after_process(session_key, 0, last_msg_id)
             return result
 
+        # ===== API Key 检查 =====
+        llm_config = self.config.get("llm", {})
+        api_key = llm_config.get("api_key")
+        api_key_asked = llm_config.get("api_key_asked", False)
+
+        if not api_key and not api_key_asked:
+            # 首次询问用户关于 API key
+            print("\n[MEMORY-AUTOMATION] API_KEY: not_configured")
+            print("memory-automation 需要配置以下信息：")
+            print("1. API key（从哪里获取？）")
+            print("2. 供应商（默认 minimax）")
+            print("3. 模型（默认 MiniMax-M2.7）")
+            print("如暂不提供，将使用 regex 蒸馏（效果较差）。")
+            # 更新状态
+            self.config["llm"]["api_key_asked"] = True
+            self._save_config()
+
         # 处理会话
         lines_written, items, final_msg_id = self.process_session(messages, force=True)
+
+        # ===== Regex 计数检查 =====
+        regex_config = self.config.get("regex", {})
+        regex_count = regex_config.get("count", 0)
+        regex_count_asked = regex_config.get("count_asked", False)
+
+        # 更新 regex 计数（每次 regex 蒸馏都计数）
+        self.config["regex"]["count"] = regex_count + 1
+        regex_count = regex_count + 1
+
+        # 检查是否达到询问阈值
+        if regex_count >= 30 and not regex_count_asked:
+            print("\n[MEMORY-AUTOMATION] REGEX_LIMIT_REACHED")
+            print("你已经使用 regex 蒸馏 30 次了，效果如何？")
+            print("是否要：")
+            print("1）提供 API key 升级到 LLM 蒸馏")
+            print("2）提供更好的蒸馏关键词/标签")
+            self.config["regex"]["count_asked"] = True
+
+        if regex_count >= 30 or regex_count_asked:
+            self.config["regex"]["count"] = 0  # 重置计数
+
+        self._save_config()
 
         # 使用最后处理的消息ID更新状态
         update_msg_id = final_msg_id or last_msg_id
