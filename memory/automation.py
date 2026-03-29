@@ -351,7 +351,8 @@ class MemoryAutomation:
                                     messages.append({
                                         "role": role,
                                         "content": text.strip(),
-                                        "msg_id": entry.get("id", "")
+                                        "msg_id": entry.get("id", ""),
+                                        "timestamp": entry.get("timestamp")
                                     })
                     except json_module.JSONDecodeError:
                         continue

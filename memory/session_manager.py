@@ -72,12 +72,17 @@ class SessionManager:
                     try:
                         entry = json.loads(line)
                         if entry.get("type") == "message":
+                            msg_data = entry.get("message", {})
+                            role = msg_data.get("role", "")
+
+                            # 跳过工具结果消息（toolResult），它们不是对话内容
+                            if role == "toolResult":
+                                continue
+
                             # 生成消息ID（如果没有）
                             msg_id = entry.get("id") or entry.get("msg_id") or f"msg_{len(all_messages)}"
-                            # 提取消息字段（数据在 entry.message 下）
-                            msg_data = entry.get("message", {})
                             msg = {
-                                "role": msg_data.get("role", ""),
+                                "role": role,
                                 "content": msg_data.get("content", ""),
                                 "timestamp": entry.get("timestamp", ""),
                                 "msg_id": msg_id
@@ -89,26 +94,25 @@ class SessionManager:
 
             # 如果只想要新消息，过滤掉已处理的消息
             if last_processed_msg_id:
+                # Fix 2: 验证 last_processed_msg_id 是否真的在当前消息列表里
+                # 如果 session 文件变了（reset/切换），旧 id 找不到会退化为全量处理
+                id_exists = any(msg.get("msg_id") == last_processed_msg_id for msg in all_messages)
+
+                if not id_exists:
+                    # session 文件可能已变，退化为全量处理
+                    print(f"[SessionManager] last_processed_msg_id={last_processed_msg_id} 不在当前 session 文件，全量处理")
+                    return session_key, all_messages, last_msg_id
+
+                # 正常过滤：跳过 last_processed_msg_id 之后的消息
                 new_messages = []
                 found_last = False
-                last_msg = None  # 记录最后一条消息
+                last_msg = None
                 for msg in all_messages:
                     last_msg = msg
                     if found_last:
                         new_messages.append(msg)
                     elif msg.get("msg_id") == last_processed_msg_id:
                         found_last = True
-                        # 不添加当前消息（跳过已处理的）
-
-                # 如果没找到上次处理的消息ID，返回所有消息（可能是新会话）
-                if not found_last:
-                    new_messages = all_messages
-                
-                # 如果找到了但没有后续消息，说明目标就是最后一条
-                # 这种情况下返回目标消息本身，用于更新 last_processed_msg_id
-                if found_last and not new_messages and last_msg:
-                    # 目标就是最后一条消息，不需要更新（已经是最新）
-                    pass
 
                 print(f"[SessionManager] 过滤后消息数: {len(new_messages)}/{len(all_messages)}")
                 return session_key, new_messages, last_msg_id

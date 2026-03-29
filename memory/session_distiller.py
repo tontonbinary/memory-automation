@@ -15,15 +15,16 @@ import urllib.error
 
 @dataclass
 class DistilledItem:
-    """蒸馏后的记忆项"""
-    item_type: str  # event, decision, preference, emotion, action
+    """蒸馏后的记忆项（7类：Event, Decision, Preference, Improve, Action, Oput, Emotion）"""
+    item_type: str  # Event, Decision, Preference, Improve, Action, Oput, Emotion
     content: str
-    emotion: Optional[str] = None
-    follow_up: Optional[str] = None
+    emotion: Optional[str] = None  # positive|negative|null
     tags: List[str] = None
+    action: Optional[str] = None  # 后续行动
+    oput: Optional[str] = None  # 成果
+    improve: Optional[str] = None  # 用户纠正/改进
     source_message: str = ""
-    outcome: Optional[str] = None  # 成果：文件路径、URL 或对话框内容描述
-    
+
     def __post_init__(self):
         if self.tags is None:
             self.tags = []
@@ -31,8 +32,8 @@ class DistilledItem:
 
 class SessionDistiller:
     """会话蒸馏器 - 提取消息中的关键信息"""
-    
-    # 提取模式定义（正则匹配，作为 LLM 失败时的降级方案）
+
+    # 提取模式定义(正则匹配,作为 LLM 失败时的降级方案)
     PATTERNS = {
         "event": [
             r"(创建了|完成了|修复了|解决了|删除了|更新了|添加了|修改了|实现了)(.+?)(?:。|$)",
@@ -51,9 +52,9 @@ class SessionDistiller:
             r"(不要|不想|不喜欢)(.+?)(?:。|$)",
         ],
         "emotion": [
-            r"(太棒了|很好|不错|完美|优秀|赞|厉害)(?:！|。|$)",
-            r"(感谢|谢谢|感激)(?:！|。|$)",
-            r"(好的|明白|了解|清楚|知道了)(?:！|。|$)",
+            r"(太棒了|很好|不错|完美|优秀|赞|厉害)(?:!|。|$)",
+            r"(感谢|谢谢|感激)(?:!|。|$)",
+            r"(好的|明白|了解|清楚|知道了)(?:!|。|$)",
             r"(着急|焦虑|担心|困惑|麻烦|头痛)(?:。|$)",
         ],
         "action": [
@@ -62,95 +63,90 @@ class SessionDistiller:
             r"(记得|别忘了|注意|确保|检查)(.+?)(?:。|$)",
         ],
     }
-    
+
     # 情绪关键词
     EMOTION_POSITIVE = ["太棒了", "很好", "不错", "完美", "优秀", "赞", "厉害", "感谢", "谢谢"]
     EMOTION_NEGATIVE = ["着急", "焦虑", "担心", "困惑", "麻烦", "头痛", "糟糕", "错误", "失败"]
-    
-    # LLM 蒸馏 Prompt 模板（使用 str.replace 格式化，避免 { } 占位符冲突）
-    DISTILLATION_PROMPT = """你是一名智能会话分析助手，负责从对话记录中提取关键信息。
 
-## 任务说明
-请分析以下对话内容，提取值得长期记忆的**关键信息**。
+    # LLM 蒸馏 Prompt 模板(使用 str.replace 格式化,避免 { } 占位符冲突)
+    DISTILLATION_PROMPT = """你是一名智能会话分析助手,负责从对话记录中提取关键信息。
 
-## L1 蒸馏规则（5种类型）
+## 重要:工具调用结果必须忽略
+以下内容是**工具执行日志**,不是用户对话,**必须完全忽略**,不要从中提取任何信息:
+- 包含 "toolResult:" 或 "tool_result:" 的行
+- 包含 "<frozen runpy>" 或 "Exec result:" 的行
+- 包含 ".md Template" 或 "SKILL.md" 的文档片段
+- 代码块、文件内容dump
 
-### 1. event（事件）
-- 用户或助手完成的具体事项
-- 格式：【主体】+【动作】+【对象】
-- 示例："创建了项目文档"、"修复了登录Bug"、"部署了新版网站"
+如果会话内容大部分都是工具日志,请返回空的提取结果。
 
-### 2. decision（决策）
-- 明确的决定、选择或判断
-- 格式：【决定】+【内容】+【依据/原因】（如有）
-- 示例："决定使用 React 框架"、"确认下周三开会"、"放弃该方案"
+## 7种记忆类型(严格按类型分类)
 
-### 3. preference（偏好）
+### 1. Event - 客观发生的事件
+- 用户或助手完成的具体事项、发现的问题
+- 示例:"session_manager发现toolResult混入"、"修复了时区转换bug"
+
+### 2. Decision - 决策
+- 明确的决定、选择、确认
+- 示例:"决定先做Fix1和Fix2"、"确认使用Asia/Shanghai时区"
+
+### 3. Preference - 偏好
 - 用户的喜好、倾向、习惯
-- 格式：【主体】+【偏好类型】+【具体内容】
-- 示例："偏好暗色主题"、"喜欢简洁的代码风格"、"倾向于早上开会"
+- 示例:"用户偏好LLM蒸馏而非正则"、"倾向简洁的代码风格"
 
-### 4. emotion（情绪）
-- 对话中表达的情感状态
-- 格式：【情绪类型】+【触发原因/对象】
-- 示例："对进度满意"、"担心截止日期"、"感谢帮助"
+### 4. Improve - 用户纠正/改进
+- 用户的批评、纠正、改进建议
+- 示例:"session_manager应该过滤toolResult"、"prompt应该更精确"
 
-### 5. action（行动）
+### 5. Action - 后续行动
 - 计划要做的、建议的后续行动
-- 格式：【行动】+【时间/条件】+【目标】
-- 示例："明天整理文档"、"需要调研竞品"、"记得测试边界情况"
+- 示例:"修改session_distiller.py"、"重置heartbeat-state.json"
+
+### 6. Oput - 成果
+- 具体产出:文件、链接、创建的东西、完成的结果
+- 示例:"输出了2026-03-30-agent.md"、"提取14项干净结果"
+
+### 7. Emotion - 情绪
+- 对话中表达的情感状态
+- 示例:对进度满意(positive)、担心bug(negative)
 
 ## 输出格式要求
 
-请严格按照以下 JSON 格式输出（不要有任何额外文字）：
+请严格按照以下 JSON 格式输出(不要有任何额外文字):
+{"items": [{"type": "Event|Decision|Preference|Improve|Action|Oput|Emotion", "content": "提炼内容(简洁,20-100字)", "emotion": "positive|negative|null", "tags": ["标签1","标签2"], "action": "后续行动或null", "oput": "成果或null", "improve": "纠正内容或null"}]}
 
-```json
-{
-  "items": [
-    {
-      "item_type": "event|decision|preference|emotion|action",
-      "content": "提取的核心内容（简洁，20-100字）",
-      "emotion": "positive|negative|null",
-      "follow_up": "后续行动建议（如有，否则null）",
-      "tags": ["标签1", "标签2", "标签3"],
-      "outcome": "成果描述（文件路径、URL等，否则null）"
-    }
-  ]
-}
-```
-
-## 标签建议
-请从以下类别中选择 2-4 个标签：
-- 技术相关：coding, devops, frontend, backend, database, api, security
-- 业务相关：meeting, planning, decision, requirement, design, review
-- 状态相关：completed, in-progress, blocked, urgent, important
-- 角色相关：user, assistant
-- 内容相关：document, code, config, data, bug, feature
+## 标签建议(选2-3个)
+- 技术:coding, devops, backend, api, bug, feature
+- 业务:meeting, planning, design, review
+- 状态:completed, in-progress, blocked, urgent
+- 角色:user, assistant
+- 内容:document, code, config, data
+- 场景:memory-automation, session, distillation
 
 ## 会话内容
 
 __SESSION_CONTENT__
 
 ## 注意事项
-1. 只提取**真正值得记忆**的内容，过滤闲聊、重复、临时信息
-2. 内容要**简洁具体**，不要泛泛而谈
-3. 每个提取项必须是独立的 JSON 对象
-4. 如果没有值得提取的内容，返回 {"items": []}
-5. **必须**返回合法的 JSON 格式，不要添加 markdown 代码块标记
+1. 只提取真正值得记忆的内容,过滤闲聊、重复、临时信息
+2. 内容要简洁具体,不要泛泛而谈
+3. 每个提取项必须指定type,不允许其他type值
+4. 如果没有值得提取的内容,返回 {"items": []}
+5. **必须**返回合法的JSON格式,不要添加markdown代码块标记
 """
-    
+
     def __init__(self, min_message_length: int = 10, config_path: Optional[str] = None):
         """
         初始化蒸馏器
-        
+
         Args:
-            min_message_length: 最小消息长度，短于此值的消息被忽略
-            config_path: 配置文件路径（用于读取 LLM API 配置）
+            min_message_length: 最小消息长度,短于此值的消息被忽略
+            config_path: 配置文件路径(用于读取 LLM API 配置)
         """
         self.min_message_length = min_message_length
         self.config = self._load_config(config_path)
         self.llm_config = self._get_llm_config()
-    
+
     def _load_config(self, config_path: Optional[str]) -> Dict[str, Any]:
         """加载配置文件"""
         default_config = {
@@ -166,13 +162,13 @@ __SESSION_CONTENT__
             },
             "fallback_to_regex": True
         }
-        
+
         # 尝试加载配置文件
         if not config_path:
             # 默认配置文件位置
             skill_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             config_path = os.path.join(skill_dir, "config.json")
-        
+
         if config_path and os.path.exists(config_path):
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:
@@ -183,31 +179,66 @@ __SESSION_CONTENT__
                     if "fallback_to_regex" in loaded:
                         default_config["fallback_to_regex"] = loaded["fallback_to_regex"]
             except (json.JSONDecodeError, IOError) as e:
-                print(f"[SessionDistiller] 加载配置失败，使用默认配置: {e}")
-        
+                print(f"[SessionDistiller] 加载配置失败,使用默认配置: {e}")
+
         return default_config
-    
+
     def _get_llm_config(self) -> Dict[str, Any]:
-        """获取 LLM 配置，优先从环境变量读取 API Key"""
+        """获取 LLM 配置,优先从环境变量读取 API Key"""
         llm_config = self.config.get("llm", {})
-        
-        # 从环境变量读取 API Key（优先级最高）
+
+        # 从环境变量读取 API Key(优先级最高)
         api_key = os.environ.get("MINIMAX_API_KEY") or os.environ.get("MINIMAX_API_TOKEN")
-        
-        # 如果环境变量没有，尝试从配置读取
+
+        # 如果环境变量没有,尝试从配置读取
         if not api_key and "api_key" in llm_config:
             api_key = llm_config["api_key"]
-        
+
         llm_config["api_key"] = api_key
         return llm_config
-    
+
+    def _clean_content(self, content: str) -> str:
+        """
+        清洗消息内容,去除工具调用结果等噪声
+
+        Args:
+            content: 原始消息内容
+
+        Returns:
+            清洗后的内容
+        """
+        if not content:
+            return ""
+
+        # 去掉 [HH:MM] toolResult: <frozen runpy...> 格式
+        content = re.sub(r'\[\d{2}:\d{2}\]\s*toolResult:\s*<[^>]+>', '', content)
+        # 去掉 <frozen runpy> 等 Python 内部表示
+        content = re.sub(r'<frozen \w+[^>]*>', '', content)
+        # 去掉 Exec result: 日志块
+        content = re.sub(r'Exec\s+result:.*?(?=\n\n|\n[A-Z]|$)', '', content, flags=re.DOTALL)
+        # 去掉 Markdown 文件内容dump(# 文件名 Template、## 标题 等片段)
+        content = re.sub(r'^#{1,3}\s+[^\n]*Template[^\n]*\n', '', content, flags=re.MULTILINE)
+        # 去掉明显的工具输出片段(行首有 [HH:MM] toolResult: 或类似格式)
+        content = re.sub(r'\n?\[\d{2}:\d{2}\]\s*toolResult:[^\n]*', '', content)
+        # 去掉 JSON/dict dump(大量 key: value 格式的行)
+        lines = content.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            # 跳过全是 "key: value" 格式的行(工具配置dump)
+            if re.match(r'^\s*"[^"]+"\s*:\s*("[^"]*"|\[|' r'\{|\d+|true|false|null)', line):
+                continue
+            cleaned_lines.append(line)
+        content = '\n'.join(cleaned_lines)
+
+        return content.strip()
+
     def _format_messages_for_prompt(self, messages: List[Dict[str, Any]]) -> str:
         """将消息列表格式化为 prompt 可用的文本"""
         formatted_lines = []
-        
+
         for msg in messages:
             role = msg.get("role", "unknown")
-            # content 可能是 list（富文本格式）或 string，需要统一处理
+            # content 可能是 list(富文本格式)或 string,需要统一处理
             raw_content = msg.get("content", "")
             if isinstance(raw_content, list):
                 content = " ".join(
@@ -216,16 +247,18 @@ __SESSION_CONTENT__
                 )
             else:
                 content = str(raw_content)
+            # 清洗工具输出噪声
+            content = self._clean_content(content)
             content = content.strip()
             timestamp = msg.get("timestamp", "")
-            
+
             # 跳过空消息和短消息
             if len(content) < self.min_message_length:
                 continue
-            
+
             # 角色显示名称
             role_display = "用户" if role == "user" else ("助手" if role == "assistant" else role)
-            
+
             # 格式化时间
             time_str = ""
             if timestamp:
@@ -235,48 +268,48 @@ __SESSION_CONTENT__
                         time_str = f"[{timestamp[11:16]}] " if 'T' in timestamp else f"[{timestamp}] "
                 except:
                     pass
-            
+
             formatted_lines.append(f"{time_str}{role_display}: {content}")
-        
+
         return "\n\n".join(formatted_lines)
-    
+
     def _call_minimax_api(self, prompt: str) -> Optional[str]:
         """
         调用 Minimax LLM API
-        
+
         Args:
             prompt: 完整的 prompt 文本
-            
+
         Returns:
-            API 返回的文本内容，失败时返回 None
+            API 返回的文本内容,失败时返回 None
         """
         if not self.llm_config.get("api_key"):
             print("[SessionDistiller] LLM API Key 未配置")
             return None
-        
+
         api_endpoint = self.llm_config.get("api_endpoint", "https://api.minimax.chat/v1/text/chatcompletion_v2")
         model = self.llm_config.get("model", "MiniMax-Text-01")
         temperature = self.llm_config.get("temperature", 0.3)
         max_tokens = self.llm_config.get("max_tokens", 4000)
         timeout = self.llm_config.get("timeout", 60)
         stream = self.llm_config.get("stream", False)
-        
+
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.llm_config['api_key']}"
         }
-        
+
         payload = {
             "model": model,
             "messages": [
-                {"role": "system", "content": "你是一个专业的会话分析助手，擅长提取关键信息并返回结构化数据。"},
+                {"role": "system", "content": "你是一个专业的会话分析助手,擅长提取关键信息并返回结构化数据。"},
                 {"role": "user", "content": prompt}
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": stream
         }
-        
+
         try:
             data = json.dumps(payload).encode('utf-8')
             req = urllib.request.Request(
@@ -285,26 +318,28 @@ __SESSION_CONTENT__
                 headers=headers,
                 method='POST'
             )
-            
+
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 result = json.loads(response.read().decode('utf-8'))
-                
+
                 # 解析响应
                 if "choices" in result and len(result["choices"]) > 0:
                     msg = result["choices"][0].get("message", {})
                     # MiniMax-M2.7 使用 reasoning_content
                     content = msg.get("content") or msg.get("reasoning_content", "")
                     if content:
+                        print(f"[SessionDistiller] >>> LLM RAW RESPONSE ({len(content)} chars):\n{content[:500]}")
                         return content
                     print(f"[SessionDistiller] 响应 message 为空: {msg}")
                     return None
                 elif "data" in result and "choices" in result["data"]:
                     content = result["data"]["choices"][0].get("message", {}).get("content", "")
+                    print(f"[SessionDistiller] >>> LLM RAW RESPONSE ({len(content)} chars):\n{content[:500]}")
                     return content
                 else:
                     print(f"[SessionDistiller] 意外的 API 响应格式: {str(result)[:200]}")
                     return None
-                    
+
         except urllib.error.HTTPError as e:
             error_code = e.code
             if error_code in [401, 403]:
@@ -331,20 +366,37 @@ __SESSION_CONTENT__
             print(f"[MEMORY-AUTOMATION] API_ERROR: {type(e).__name__}")
             print(f"[SessionDistiller] 错误详情: {e}")
             return None
-    
+
     def _parse_llm_response(self, response: str) -> List[Dict[str, Any]]:
         """
         解析 LLM 返回的 JSON 响应
-        
+
         Args:
             response: LLM 返回的原始文本
-            
+
         Returns:
             解析后的 items 列表
         """
         if not response:
+            print("[SessionDistiller] LLM 响应为空")
             return []
-        
+
+        # 快速检测是否是被工具输出污染的响应（不是合法 JSON）
+        response_preview = response.strip()[:100]
+        # 用更精确的 pattern：工具输出的特征格式（行首时间戳 + toolResult:）
+        if re.search(r'\[\d{2}:\d{2}\]\s*toolResult:', response):
+            full = response.strip()[:2000]
+            print(f"[SessionDistiller] ⚠️ LLM 响应疑似被工具输出污染:\n{full}")
+            return []
+        # 检查是否以工具输出片段开头（非 JSON）
+        if response.strip().startswith(('[', '{')):
+            pass  # 可能是正常 JSON，继续解析
+        elif re.match(r'^[A-Za-z#]+', response.strip()) and '"items"' not in response[:200]:
+            # 看起来像文本而不是 JSON
+            full = response.strip()[:2000]
+            print(f"[SessionDistiller] ⚠️ LLM 响应不像 JSON:\n{full}")
+            return []
+
         try:
             # 清理可能的 markdown 代码块标记
             cleaned = response.strip()
@@ -355,10 +407,10 @@ __SESSION_CONTENT__
             if cleaned.endswith("```"):
                 cleaned = cleaned[:-3]
             cleaned = cleaned.strip()
-            
+
             # 解析 JSON
             data = json.loads(cleaned)
-            
+
             if isinstance(data, dict) and "items" in data:
                 items = data["items"]
                 if isinstance(items, list):
@@ -366,100 +418,152 @@ __SESSION_CONTENT__
             elif isinstance(data, list):
                 # 有些模型可能直接返回数组
                 return data
-            
-            print(f"[SessionDistiller] LLM 响应格式不符合预期: {data}")
+
+            print(f"[SessionDistiller] LLM 响应格式不符合预期: {str(data)[:200]}")
             return []
-            
+
         except json.JSONDecodeError as e:
-            print(f"[SessionDistiller] 无法解析 LLM 响应为 JSON: {e}")
-            print(f"[SessionDistiller] 原始响应: {response[:200]}...")
+            # JSON 不完整（LLM 生成被截断），尝试抢救
+            print(f"[SessionDistiller] JSON 解析不完整: {e}")
+            # 打印完整响应（截断到 2000 字符方便调试）
+            full_response = response.strip()[:2000]
+            print(f"[SessionDistiller] >>> FULL LLM RESPONSE ON FAILURE:\n{full_response}")
+            # 尝试从截断位置截断后手动提取 items
+            items = self._try_recover_partial_json(response)
+            if items:
+                print(f"[SessionDistiller] 从截断响应中抢救到 {len(items)} 项")
+                return items
             return []
         except Exception as e:
             print(f"[SessionDistiller] 解析 LLM 响应时出错: {e}")
             return []
-    
+
+    def _try_recover_partial_json(self, response: str) -> List[Dict[str, Any]]:
+        """
+        尝试从截断的 LLM 响应中抢救 items
+
+        当 LLM 响应被截断导致 JSON 不完整时，尝试从中间提取合法的 items 数组
+
+        Args:
+            response: 可能截断的响应文本
+
+        Returns:
+            抢救到的 items 列表
+        """
+        # 尝试找到 "items": [ 或 "items":[{ 开始的部分
+        match = re.search(r'"items"\s*:\s*\[', response)
+        if not match:
+            return []
+
+        # 从 items 数组开始位置截取
+        items_start = match.start()
+        partial = response[items_start:]
+
+        # 尝试补全并解析
+        # 如果结尾不完整，尝试补上 ]}
+        if not partial.strip().endswith(']') and not partial.strip().endswith(']}'):
+            # 找到最后一个完整的 item 对象
+            last_brace = partial.rfind('},')
+            if last_brace > 0:
+                partial = partial[:last_brace + 1] + ']}'
+            else:
+                # 找不到完整 item，返回空
+                return []
+
+        try:
+            data = json.loads(partial)
+            if isinstance(data, dict) and "items" in data and isinstance(data["items"], list):
+                return data["items"]
+        except json.JSONDecodeError:
+            pass
+
+        return []
+
     def distill_with_llm(self, messages: List[Dict[str, Any]]) -> List[DistilledItem]:
         """
         使用 LLM 进行智能蒸馏
-        
+
         Args:
             messages: 消息列表
-            
+
         Returns:
             蒸馏后的记忆项列表
         """
         if not self.llm_config.get("enabled", True):
             print("[SessionDistiller] LLM 蒸馏已禁用")
             return []
-        
+
         # 格式化会话内容
         session_content = self._format_messages_for_prompt(messages)
-        
+
         if not session_content:
             print("[SessionDistiller] 没有足够的内容进行 LLM 蒸馏")
             return []
-        
+
         # 构建 prompt
         prompt = self.DISTILLATION_PROMPT.replace("__SESSION_CONTENT__", session_content)
-        
+
         # 调用 LLM API
         print("[SessionDistiller] 正在调用 LLM 进行智能蒸馏...")
         response = self._call_minimax_api(prompt)
-        
+
         if not response:
             print("[SessionDistiller] LLM API 调用失败")
             return []
-        
+
         # 解析响应
         items_data = self._parse_llm_response(response)
-        
+
         if not items_data:
             print("[SessionDistiller] LLM 未返回有效提取项")
             return []
-        
+
         # 转换为 DistilledItem 对象
         distilled_items = []
+        VALID_TYPES = {"Event", "Decision", "Preference", "Improve", "Action", "Oput", "Emotion"}
         for item_data in items_data:
             try:
-                # 验证必要字段
-                if "item_type" not in item_data or "content" not in item_data:
+                # 验证必要字段（支持 type 或 item_type）
+                type_val = item_data.get("type") or item_data.get("item_type")
+                if not type_val or "content" not in item_data:
                     continue
-                
-                # 确保 item_type 有效
-                item_type = item_data["item_type"]
-                if item_type not in ["event", "decision", "preference", "emotion", "action"]:
-                    item_type = "event"  # 默认类型
-                
-                # 构建 DistilledItem
+
+                # 确保 item_type 有效（不区分大小写）
+                item_type = type_val.capitalize()
+                if item_type not in VALID_TYPES:
+                    item_type = "Event"  # 默认类型
+
+                # 构建 DistilledItem（新格式7类）
                 item = DistilledItem(
                     item_type=item_type,
                     content=item_data.get("content", ""),
                     emotion=item_data.get("emotion") if item_data.get("emotion") != "null" else None,
-                    follow_up=item_data.get("follow_up") if item_data.get("follow_up") != "null" else None,
                     tags=item_data.get("tags", []),
-                    source_message="",  # LLM 版本不保留原始消息引用
-                    outcome=item_data.get("outcome") if item_data.get("outcome") != "null" else None
+                    action=item_data.get("action") if item_data.get("action") != "null" else None,
+                    oput=item_data.get("oput") if item_data.get("oput") != "null" else None,
+                    improve=item_data.get("improve") if item_data.get("improve") != "null" else None,
+                    source_message=""
                 )
-                
+
                 # 去重检查
                 if not self._is_duplicate(item, distilled_items):
                     distilled_items.append(item)
-                    
+
             except Exception as e:
                 print(f"[SessionDistiller] 处理 LLM 返回项时出错: {e}")
                 continue
-        
-        print(f"[SessionDistiller] LLM 蒸馏完成，提取 {len(distilled_items)} 项")
+
+        print(f"[SessionDistiller] LLM 蒸馏完成,提取 {len(distilled_items)} 项")
         return distilled_items
-    
+
     def distill_messages(self, messages: List[Dict[str, Any]], use_llm: bool = True) -> List[DistilledItem]:
         """
         从消息列表中蒸馏关键信息
-        
+
         Args:
-            messages: 消息列表，每个消息为字典，包含 role 和 content
-            use_llm: 是否优先使用 LLM 蒸馏（默认 True）
-            
+            messages: 消息列表,每个消息为字典,包含 role 和 content
+            use_llm: 是否优先使用 LLM 蒸馏(默认 True)
+
         Returns:
             蒸馏后的记忆项列表
         """
@@ -469,14 +573,14 @@ __SESSION_CONTENT__
                 llm_items = self.distill_with_llm(messages)
                 if llm_items:
                     return llm_items
-                # LLM 返回空结果，检查是否启用降级
+                # LLM 返回空结果,检查是否启用降级
                 if not self.config.get("fallback_to_regex", True):
                     return []
-                print("[SessionDistiller] LLM 未提取到内容，降级到正则匹配...")
+                print("[SessionDistiller] LLM 未提取到内容,降级到正则匹配...")
             except Exception as e:
                 error_msg = str(e)
                 if "API_KEY" in error_msg or "API_ERROR" in error_msg:
-                    # 已经是 [MEMORY-AUTOMATION] 格式的错误消息，直接打印
+                    # 已经是 [MEMORY-AUTOMATION] 格式的错误消息,直接打印
                     pass
                 elif "401" in error_msg or "403" in error_msg:
                     print("[MEMORY-AUTOMATION] API_ERROR: API_KEY_INVALID")
@@ -488,27 +592,27 @@ __SESSION_CONTENT__
                     print("[MEMORY-AUTOMATION] API_ERROR: API_CONNECTION_ERROR")
                 else:
                     print(f"[MEMORY-AUTOMATION] API_ERROR: {type(e).__name__}")
-                print(f"[SessionDistiller] LLM 蒸馏异常，降级到正则匹配: {e}")
+                print(f"[SessionDistiller] LLM 蒸馏异常,降级到正则匹配: {e}")
                 if not self.config.get("fallback_to_regex", True):
                     return []
-        
-        # 正则匹配（作为 fallback）
+
+        # 正则匹配(作为 fallback)
         return self._distill_with_regex(messages)
-    
+
     def _distill_with_regex(self, messages: List[Dict[str, Any]]) -> List[DistilledItem]:
         """
-        使用正则表达式进行蒸馏（原始方法，作为 fallback）
-        
+        使用正则表达式进行蒸馏(原始方法,作为 fallback)
+
         Args:
             messages: 消息列表
-            
+
         Returns:
             蒸馏后的记忆项列表
         """
         distilled_items = []
-        
+
         for idx, msg in enumerate(messages):
-            # content 可能是 list（富文本格式）或 string，需要统一处理
+            # content 可能是 list(富文本格式)或 string,需要统一处理
             raw_content = msg.get("content", "")
             if isinstance(raw_content, list):
                 content = " ".join(
@@ -517,48 +621,50 @@ __SESSION_CONTENT__
                 )
             else:
                 content = str(raw_content)
+            # 清洗工具输出噪声
+            content = self._clean_content(content)
             content = content.strip()
             role = msg.get("role", "unknown")
-            
+
             # 跳过短消息
             if len(content) < self.min_message_length:
                 continue
-            
+
             # 尝试提取各类型信息
             for item_type, patterns in self.PATTERNS.items():
                 for pattern in patterns:
                     matches = re.finditer(pattern, content, re.IGNORECASE)
                     for match in matches:
                         distilled_content = match.group(0)
-                        
+
                         # 检测情绪
                         emotion = self._detect_emotion(content)
-                        
+
                         # 生成标签
                         tags = self._generate_tags(item_type, content, role)
-                        
-                        # 查找后续行动（通常在消息后半部分）
-                        follow_up = self._extract_follow_up(content)
-                        
-                        # 提取成果（文件路径、URL 或"已输出"描述）
-                        outcome = self._extract_outcome(content, role)
-                        
+
+                        # 查找后续行动(通常在消息后半部分)
+                        action = self._extract_follow_up(content)
+
+                        # 提取成果(文件路径、URL 或"已输出"描述)
+                        oput = self._extract_outcome(content, role)
+
                         item = DistilledItem(
                             item_type=item_type,
                             content=distilled_content,
                             emotion=emotion,
-                            follow_up=follow_up,
                             tags=tags,
-                            source_message=content[:200],  # 限制长度
-                            outcome=outcome
+                            action=action,
+                            oput=oput,
+                            source_message=content[:200],
                         )
-                        
+
                         # 去重检查
                         if not self._is_duplicate(item, distilled_items):
                             distilled_items.append(item)
-        
+
         return distilled_items
-    
+
     def _detect_emotion(self, content: str) -> Optional[str]:
         """检测情绪关键词"""
         for word in self.EMOTION_POSITIVE:
@@ -568,11 +674,11 @@ __SESSION_CONTENT__
             if word in content:
                 return "negative"
         return None
-    
+
     def _generate_tags(self, item_type: str, content: str, role: str) -> List[str]:
         """生成标签"""
         tags = [item_type]
-        
+
         # 根据内容添加标签
         if "代码" in content or "编程" in content or "bug" in content.lower():
             tags.append("coding")
@@ -584,15 +690,15 @@ __SESSION_CONTENT__
             tags.append("completed")
         if "计划" in content or "安排" in content:
             tags.append("planning")
-        
+
         # 根据角色添加标签
         if role == "user":
             tags.append("user")
         elif role == "assistant":
             tags.append("assistant")
-        
+
         return tags
-    
+
     def _extract_follow_up(self, content: str) -> Optional[str]:
         """提取后续行动"""
         # 查找后续行动的关键词
@@ -600,94 +706,99 @@ __SESSION_CONTENT__
             r"(下一步|接下来|之后|稍后)(.+?)(?:。|$)",
             r"(记得|别忘了|注意|确保|检查)(.+?)(?:。|$)",
         ]
-        
+
         for pattern in follow_patterns:
             match = re.search(pattern, content)
             if match:
                 return match.group(0)
-        
+
         return None
-    
+
     def _is_duplicate(self, item: DistilledItem, existing_items: List[DistilledItem]) -> bool:
         """检查是否重复"""
         for existing in existing_items:
-            if (existing.item_type == item.item_type and 
+            if (existing.item_type == item.item_type and
                 existing.content == item.content):
                 return True
         return False
-    
+
     def _extract_outcome(self, content: str, role: str) -> Optional[str]:
         """
         提取成果信息
-        
+
         Args:
             content: 消息内容
-            role: 角色（user/assistant）
-            
+            role: 角色(user/assistant)
+
         Returns:
-            成果描述，如果无则返回 None
+            成果描述,如果无则返回 None
         """
-        # 只有 assistant（Agent）才会产生实际成果
+        # 只有 assistant(Agent)才会产生实际成果
         if role != "assistant":
             return None
-        
+
         # 检测文件路径
         file_paths = re.findall(r'[\~\/\w]+\.[\w]+', content)
         if file_paths:
             # 返回找到的文件路径
-            return f"文件：{'、'.join(file_paths[:3])}"  # 最多3个
-        
+            return f"文件:{'、'.join(file_paths[:3])}"  # 最多3个
+
         # 检测 URL
         urls = re.findall(r'https?://[^\s\)\]"\'<>]+', content)
         if urls:
-            return f"链接：{'、'.join(urls[:2])}"
-        
-        # 检测"完成"类关键词，说明有实际输出
+            return f"链接:{'、'.join(urls[:2])}"
+
+        # 检测"完成"类关键词,说明有实际输出
         if any(kw in content for kw in ["已完成", "已完成", "搞定了", "完成", "创建了", "更新了"]):
             # 检查是否提到了具体内容
             if any(kw in content for kw in ["文档", "文件", "代码", "脚本", "规则", "配置"]):
                 return "已输出到对话框或文件"
-        
+
         return None
-    
-    def format_l1_entry(self, item: DistilledItem, line_number: int = 0, outcome: str = None) -> str:
+
+    def format_l1_entry(self, item: DistilledItem, line_number: int = 0,
+                        entry_time: str = None, session_date: str = None) -> str:
         """
         格式化为 L1 存储格式
-        
+
         Args:
             item: 蒸馏项
             line_number: 行号
-            outcome: 成果（可选），可以是文件路径、URL 或对话框内容描述
-            
+            entry_time: 条目时间戳(HH:MM)，None则使用当前时间
+            session_date: session 日期(YYYY-MM-DD)
+
         Returns:
             Markdown 格式的记忆条目
         """
-        timestamp = datetime.now().strftime("%H:%M")
-        
+        if entry_time is None:
+            entry_time = datetime.now().strftime("%H:%M")
+
         lines = [
-            f"## {timestamp}",
+            f"## {entry_time}",
             f"### {item.item_type.capitalize()}",
             f"- **内容**：{item.content}",
         ]
-        
+
         if item.emotion:
             lines.append(f"- **情绪**：{item.emotion}")
-        
-        # 新增：成果字段
-        if outcome:
-            lines.append(f"- **成果**：{outcome}")
-        
-        if item.follow_up:
-            lines.append(f"- **后续行动**：{item.follow_up}")
-        
+
+        if item.action:
+            lines.append(f"- **后续行动**：{item.action}")
+
+        if item.oput:
+            lines.append(f"- **成果**：{item.oput}")
+
+        if item.improve:
+            lines.append(f"- **纠正**：{item.improve}")
+
         if item.tags:
             tag_str = " ".join([f"#{tag}" for tag in item.tags])
             lines.append(f"- **标签**：`{tag_str}`")
-        
-        # 添加来源信息
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        lines.append(f"- **来源**：memory/{date_str}.md#L{line_number}")
-        
-        lines.append("")  # 空行分隔
-        
+
+        # 来源信息
+        if session_date is None:
+            session_date = datetime.now().strftime("%Y-%m-%d")
+        lines.append(f"- **来源**：session/{session_date[5:]}#L{line_number}")
+
+        lines.append("")
         return "\n".join(lines)

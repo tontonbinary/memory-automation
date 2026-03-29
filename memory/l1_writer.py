@@ -17,9 +17,15 @@ class L1Writer:
         self.agent_id = agent_id
         self.config = config
 
-    def _get_l1_path(self) -> Path:
-        """获取当前 L1 文件路径"""
-        date_str = datetime.now().strftime("%Y-%m-%d")
+    def _get_l1_path(self, date_str: str = None) -> Path:
+        """
+        获取当前 L1 文件路径
+        
+        Args:
+            date_str: 日期字符串 (YYYY-MM-DD)，None 则使用当前日期
+        """
+        if date_str is None:
+            date_str = datetime.now().strftime("%Y-%m-%d")
 
         # 从配置构建路径
         template = self.config.get("l1_template",
@@ -28,21 +34,25 @@ class L1Writer:
         path_str = template.format(agent=self.agent_id, date=date_str)
         return Path(path_str).expanduser()
 
-    def _format_l1_entry(self, item: Dict[str, Any], line_number: int = 0) -> str:
+    def _format_l1_entry(self, item: Dict[str, Any], line_number: int = 0, 
+                         entry_time: str = None, session_date: str = None) -> str:
         """
         格式化为 L1 存储格式
 
         Args:
             item: 蒸馏项
             line_number: 行号
+            entry_time: 条目时间戳 (HH:MM)，None 则使用当前时间
+            session_date: session 日期 (YYYY-MM-DD)，用于来源字段
 
         Returns:
             Markdown 格式的记忆条目
         """
-        timestamp = datetime.now().strftime("%H:%M")
+        if entry_time is None:
+            entry_time = datetime.now().strftime("%H:%M")
 
         lines = [
-            f"## {timestamp}",
+            f"## {entry_time}",
             f"### {item['item_type'].capitalize()}",
             f"- **内容**：{item['content']}",
         ]
@@ -50,26 +60,32 @@ class L1Writer:
         if item.get("emotion"):
             lines.append(f"- **情绪**：{item['emotion']}")
 
-        # 新增：成果字段
-        if item.get("outcome"):
-            lines.append(f"- **成果**：{item['outcome']}")
+        if item.get("action"):
+            lines.append(f"- **后续行动**：{item['action']}")
 
-        if item.get("follow_up"):
-            lines.append(f"- **后续行动**：{item['follow_up']}")
+        if item.get("oput"):
+            lines.append(f"- **成果**：{item['oput']}")
+
+        if item.get("improve"):
+            lines.append(f"- **纠正**：{item['improve']}")
 
         if item.get("tags"):
             tag_str = " ".join([f"#{tag}" for tag in item["tags"]])
             lines.append(f"- **标签**：`{tag_str}`")
 
-        # 添加来源信息
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        lines.append(f"- **来源**：memory/{date_str}.md#L{line_number}")
+        # 添加来源信息（使用 session 原始日期）
+        if session_date is None:
+            session_date = datetime.now().strftime("%Y-%m-%d")
+        lines.append(f"- **来源**：session/{session_date[5:]}#L{line_number}")
 
         lines.append("")  # 空行分隔
 
         return "\n".join(lines)
 
-    def write(self, items: List[Dict[str, Any]]) -> int:
+    def write(self, items: List[Dict[str, Any]], 
+              session_start_time: str = None,
+              session_end_time: str = None,
+              item_times: List[str] = None) -> int:
         """
         写入 L1 存储文件（两段式格式）
 
@@ -78,11 +94,36 @@ class L1Writer:
 
         Args:
             items: 蒸馏项列表
+            session_start_time: session 开始时间戳 (ISO 8601 格式)
+            session_end_time: session 结束时间戳 (ISO 8601 格式)
+            item_times: 可选，每项的时间戳列表(HH:MM)，与items对齐。
+                        如不提供，则所有项使用session_start_time。
 
         Returns:
             写入行数
         """
-        l1_path = self._get_l1_path()
+        # 从 session 时间计算日期和条目时间戳
+        if session_start_time:
+            try:
+                # 解析 ISO 8601 时间（处理 Z 后缀为 UTC）
+                start_dt = datetime.fromisoformat(session_start_time.replace('Z', '+00:00'))
+                # 转换到 Asia/Shanghai 时区（UTC+8）
+                from zoneinfo import ZoneInfo
+                start_dt = start_dt.astimezone(ZoneInfo("Asia/Shanghai"))
+                date_str = start_dt.strftime("%Y-%m-%d")
+                entry_time_default = start_dt.strftime("%H:%M")
+            except (ValueError, AttributeError):
+                # 解析失败，使用当前时间
+                date_str = datetime.now().strftime("%Y-%m-%d")
+                entry_time_default = datetime.now().strftime("%H:%M")
+        else:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            entry_time_default = datetime.now().strftime("%H:%M")
+
+        # per-item 时间戳（如果提供了）
+        has_item_times = item_times is not None and len(item_times) >= len(items)
+
+        l1_path = self._get_l1_path(date_str)
 
         # 确保目录存在
         l1_path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,22 +143,22 @@ class L1Writer:
         # 构建新的标签索引行
         new_index_lines = []
         for idx, item in enumerate(items):
-            timestamp = datetime.now().strftime("%H:%M")
+            item_time = item_times[idx] if has_item_times else entry_time_default
             tags_str = " ".join([f"#{tag}" for tag in item.get("tags", [])]) if item.get("tags") else "-"
             # 索引行格式：| 时间 | 标签 | 类型 | 位置 |
-            index_entry = f"| {timestamp} | {tags_str} | {item['item_type']} | ## {timestamp} |"
+            index_entry = f"| {item_time} | {tags_str} | {item['item_type']} | ## {item_time} |"
             new_index_lines.append(index_entry)
 
         # 构建新的完整日志条目
         new_log_entries = []
         for idx, item in enumerate(items):
-            entry = self._format_l1_entry(item, start_line + idx)
+            item_time = item_times[idx] if has_item_times else entry_time_default
+            entry = self._format_l1_entry(item, start_line + idx, item_time, date_str)
             new_log_entries.append(entry)
 
         # 写入文件
         lines_written = 0
         with open(l1_path, 'w', encoding='utf-8') as f:
-            date_str = datetime.now().strftime("%Y-%m-%d")
 
             if is_new_file:
                 # 新文件：写入完整的两段式结构
