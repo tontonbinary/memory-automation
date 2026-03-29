@@ -207,7 +207,16 @@ class SessionDistiller:
         
         for msg in messages:
             role = msg.get("role", "unknown")
-            content = msg.get("content", "").strip()
+            # content 可能是 list（富文本格式）或 string，需要统一处理
+            raw_content = msg.get("content", "")
+            if isinstance(raw_content, list):
+                content = " ".join(
+                    item.get("text", "") for item in raw_content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                )
+            else:
+                content = str(raw_content)
+            content = content.strip()
             timestamp = msg.get("timestamp", "")
             
             # 跳过空消息和短消息
@@ -471,7 +480,16 @@ class SessionDistiller:
         distilled_items = []
         
         for idx, msg in enumerate(messages):
-            content = msg.get("content", "").strip()
+            # content 可能是 list（富文本格式）或 string，需要统一处理
+            raw_content = msg.get("content", "")
+            if isinstance(raw_content, list):
+                content = " ".join(
+                    item.get("text", "") for item in raw_content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                )
+            else:
+                content = str(raw_content)
+            content = content.strip()
             role = msg.get("role", "unknown")
             
             # 跳过短消息

@@ -6,8 +6,9 @@ Message Processor - 消息处理模块
 
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
+from dataclasses import asdict
 
-from .distiller_agent import DistillerAgent
+from .session_distiller import SessionDistiller
 from .l1_writer import L1Writer
 from .session_manager import SessionManager
 
@@ -18,7 +19,7 @@ class MessageProcessor:
     def __init__(self, agent_id: str, config: Dict[str, Any],
                  session_manager: SessionManager,
                  l1_writer: L1Writer,
-                 distiller: DistillerAgent):
+                 distiller: SessionDistiller):
         self.agent_id = agent_id
         self.config = config
         self.session_manager = session_manager
@@ -40,8 +41,10 @@ class MessageProcessor:
         if not messages:
             return 0, [], None
 
-        # Agent 自己蒸馏消息（无需 LLM API）
-        distilled_items = self.distiller.distill(messages)
+        # LLM 蒸馏（支持 fallback 到正则）
+        raw_items = self.distiller.distill_messages(messages, use_llm=True)
+        # 转换 DistilledItem dataclass 为 dict
+        distilled_items = [asdict(item) if hasattr(item, 'item_type') else item for item in raw_items]
 
         if not distilled_items:
             print("[MessageProcessor] 未提取到有效信息")
@@ -97,8 +100,10 @@ class MessageProcessor:
 
         print(f"[MessageProcessor] 从旧 session 收集到 {len(all_messages)} 条消息待蒸馏")
 
-        # 蒸馏消息
-        distilled_items = self.distiller.distill(all_messages)
+        # LLM 蒸馏（支持 fallback 到正则）
+        raw_items = self.distiller.distill_messages(all_messages, use_llm=True)
+        # 转换 DistilledItem dataclass 为 dict
+        distilled_items = [asdict(item) if hasattr(item, 'item_type') else item for item in raw_items]
 
         if not distilled_items:
             print("[MessageProcessor] 旧 session 未提取到有效信息")

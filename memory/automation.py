@@ -21,7 +21,7 @@ from .state_manager import StateManager
 from .session_manager import SessionManager
 from .message_processor import MessageProcessor
 from .pattern_detector import PatternDetector
-from .distiller_agent import DistillerAgent
+from .session_distiller import SessionDistiller
 from .l1_writer import L1Writer
 
 
@@ -51,7 +51,9 @@ class MemoryAutomation:
             agent_id=self.agent_id,
             config=self.config
         )
-        self.distiller = DistillerAgent(config=self.config)
+        self.distiller = SessionDistiller(
+            min_message_length=self.config.get("distillation", {}).get("min_message_length", 10)
+        )
         self.message_processor = MessageProcessor(
             agent_id=self.agent_id,
             config=self.config,
