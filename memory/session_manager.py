@@ -74,10 +74,11 @@ class SessionManager:
                         if entry.get("type") == "message":
                             # 生成消息ID（如果没有）
                             msg_id = entry.get("id") or entry.get("msg_id") or f"msg_{len(all_messages)}"
-                            # 提取消息字段
+                            # 提取消息字段（数据在 entry.message 下）
+                            msg_data = entry.get("message", {})
                             msg = {
-                                "role": entry.get("role", ""),
-                                "content": entry.get("content", ""),
+                                "role": msg_data.get("role", ""),
+                                "content": msg_data.get("content", ""),
                                 "timestamp": entry.get("timestamp", ""),
                                 "msg_id": msg_id
                             }
@@ -204,9 +205,10 @@ class SessionManager:
                         entry = json.loads(line)
                         if entry.get("type") == "message":
                             msg_id = entry.get("id") or entry.get("msg_id") or f"msg_{len(messages)}"
+                            msg_data = entry.get("message", {})
                             msg = {
-                                "role": entry.get("role", ""),
-                                "content": entry.get("content", ""),
+                                "role": msg_data.get("role", ""),
+                                "content": msg_data.get("content", ""),
                                 "timestamp": entry.get("timestamp", ""),
                                 "msg_id": msg_id
                             }
