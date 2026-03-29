@@ -391,11 +391,10 @@ class MemoryAutomation:
         """
         Heartbeat 触发入口
 
-        Agent LLM 蒸馏架构（已实现）：
-        1. Heartbeat 读取新消息
-        2. 直接在当前进程调用 process_session 进行蒸馏
-        3. SessionDistiller 使用 LLM（优先）或 regex fallback
-        4. 蒸馏结果写入 L1
+        架构：
+        1. Heartbeat 读取新消息 → 写入 pending_queue
+        2. 打印提示 → Agent 在自己上下文蒸馏
+        3. 关键词触发 → 同样流程
 
         Session 切换处理：
         - 检测到 session_key 变化时，先处理旧 session 的未蒸馏消息
@@ -472,21 +471,22 @@ class MemoryAutomation:
             self.state_manager.update_after_process(session_key, 0, last_msg_id)
             return result
 
-        # 直接在当前进程处理蒸馏（Agent LLM 蒸馏）
-        # 不再写入 pending_queue 等待，Agent 在自己上下文直接处理
-        lines_written, items, final_msg_id = self.process_session(messages, force=True)
+        # 写入 pending_queue，让 Agent 自己蒸馏
+        queue_path = self._write_pending_queue(messages)
 
-        update_msg_id = final_msg_id or last_msg_id or (messages[-1].get("msg_id") if messages else None)
-        self.state_manager.update_after_process(session_key, len(items), update_msg_id)
+        update_msg_id = last_msg_id or (messages[-1].get("msg_id") if messages else None)
+        self.state_manager.update_after_process(session_key, 0, update_msg_id)
 
         result.update({
             "triggered": True,
-            "reason": f"Heartbeat 发现 {len(messages)} 条新消息，蒸馏 {len(items)} 项",
+            "reason": f"发现 {len(messages)} 条新消息待蒸馏",
             "pending_count": len(messages),
-            "items_distilled": len(items),
-            "lines_written": lines_written,
+            "queue_file": str(queue_path),
             "session_key": session_key
         })
+
+        # Agent 会在自己的上下文看到这条消息并执行蒸馏
+        print(f"\n[MEMORY] 发现 {len(messages)} 条新消息待蒸馏，Agent 请执行记忆蒸馏")
 
         return result
 
