@@ -67,7 +67,7 @@ class SessionDistiller:
     EMOTION_POSITIVE = ["太棒了", "很好", "不错", "完美", "优秀", "赞", "厉害", "感谢", "谢谢"]
     EMOTION_NEGATIVE = ["着急", "焦虑", "担心", "困惑", "麻烦", "头痛", "糟糕", "错误", "失败"]
     
-    # LLM 蒸馏 Prompt 模板
+    # LLM 蒸馏 Prompt 模板（使用 str.replace 格式化，避免 { } 占位符冲突）
     DISTILLATION_PROMPT = """你是一名智能会话分析助手，负责从对话记录中提取关键信息。
 
 ## 任务说明
@@ -129,7 +129,7 @@ class SessionDistiller:
 
 ## 会话内容
 
-{session_content}
+__SESSION_CONTENT__
 
 ## 注意事项
 1. 只提取**真正值得记忆**的内容，过滤闲聊、重复、临时信息
@@ -291,13 +291,18 @@ class SessionDistiller:
                 
                 # 解析响应
                 if "choices" in result and len(result["choices"]) > 0:
-                    content = result["choices"][0].get("message", {}).get("content", "")
-                    return content
+                    msg = result["choices"][0].get("message", {})
+                    # MiniMax-M2.7 使用 reasoning_content
+                    content = msg.get("content") or msg.get("reasoning_content", "")
+                    if content:
+                        return content
+                    print(f"[SessionDistiller] 响应 message 为空: {msg}")
+                    return None
                 elif "data" in result and "choices" in result["data"]:
                     content = result["data"]["choices"][0].get("message", {}).get("content", "")
                     return content
                 else:
-                    print(f"[SessionDistiller] 意外的 API 响应格式: {result}")
+                    print(f"[SessionDistiller] 意外的 API 响应格式: {str(result)[:200]}")
                     return None
                     
         except urllib.error.HTTPError as e:
@@ -395,7 +400,7 @@ class SessionDistiller:
             return []
         
         # 构建 prompt
-        prompt = self.DISTILLATION_PROMPT.format(session_content=session_content)
+        prompt = self.DISTILLATION_PROMPT.replace("__SESSION_CONTENT__", session_content)
         
         # 调用 LLM API
         print("[SessionDistiller] 正在调用 LLM 进行智能蒸馏...")
@@ -469,6 +474,20 @@ class SessionDistiller:
                     return []
                 print("[SessionDistiller] LLM 未提取到内容，降级到正则匹配...")
             except Exception as e:
+                error_msg = str(e)
+                if "API_KEY" in error_msg or "API_ERROR" in error_msg:
+                    # 已经是 [MEMORY-AUTOMATION] 格式的错误消息，直接打印
+                    pass
+                elif "401" in error_msg or "403" in error_msg:
+                    print("[MEMORY-AUTOMATION] API_ERROR: API_KEY_INVALID")
+                elif "429" in error_msg:
+                    print("[MEMORY-AUTOMATION] API_ERROR: API_RATE_LIMITED")
+                elif "JSON" in error_msg or "Parse" in error_msg:
+                    print(f"[MEMORY-AUTOMATION] API_ERROR: API_RESPONSE_PARSE_ERROR")
+                elif "Connection" in error_msg or "network" in error_msg.lower():
+                    print("[MEMORY-AUTOMATION] API_ERROR: API_CONNECTION_ERROR")
+                else:
+                    print(f"[MEMORY-AUTOMATION] API_ERROR: {type(e).__name__}")
                 print(f"[SessionDistiller] LLM 蒸馏异常，降级到正则匹配: {e}")
                 if not self.config.get("fallback_to_regex", True):
                     return []
