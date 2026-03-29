@@ -391,11 +391,11 @@ class MemoryAutomation:
         """
         Heartbeat 触发入口
 
-        新的 Agent LLM 蒸馏架构：
-        1. Heartbeat 只负责读取新消息并写入 pending_queue.json
-        2. 更新 last_processed_msg_id 状态
-        3. Agent 收到 heartbeat 响应后，在自己上下文用 LLM 能力处理
-        4. Agent 自行调用写 L1
+        Agent LLM 蒸馏架构（已实现）：
+        1. Heartbeat 读取新消息
+        2. 直接在当前进程调用 process_session 进行蒸馏
+        3. SessionDistiller 使用 LLM（优先）或 regex fallback
+        4. 蒸馏结果写入 L1
 
         Session 切换处理：
         - 检测到 session_key 变化时，先处理旧 session 的未蒸馏消息
@@ -469,28 +469,22 @@ class MemoryAutomation:
 
         if not messages:
             result["reason"] = "没有新消息"
-            # 仍然更新状态
             self.state_manager.update_after_process(session_key, 0, last_msg_id)
             return result
 
-        # 写入待处理队列（而不是直接蒸馏）
-        queue_path = self._write_pending_queue(messages)
+        # 直接在当前进程处理蒸馏（Agent LLM 蒸馏）
+        # 不再写入 pending_queue 等待，Agent 在自己上下文直接处理
+        lines_written, items, final_msg_id = self.process_session(messages, force=True)
 
-        # 更新状态：记录最后处理的消息ID
-        update_msg_id = last_msg_id
-        if messages:
-            update_msg_id = messages[-1].get("msg_id") or last_msg_id
-        self.state_manager.update_after_process(session_key, 0, update_msg_id)
-
-        # 输出 Agent 提示
-        print(f"\n[MemoryAutomation] 发现 {len(messages)} 条新消息待蒸馏")
-        print(f"请检查 {queue_path} 并进行 LLM 蒸馏")
+        update_msg_id = final_msg_id or last_msg_id or (messages[-1].get("msg_id") if messages else None)
+        self.state_manager.update_after_process(session_key, len(items), update_msg_id)
 
         result.update({
             "triggered": True,
-            "reason": f"Heartbeat 发现 {len(messages)} 条新消息",
+            "reason": f"Heartbeat 发现 {len(messages)} 条新消息，蒸馏 {len(items)} 项",
             "pending_count": len(messages),
-            "queue_file": str(queue_path),
+            "items_distilled": len(items),
+            "lines_written": lines_written,
             "session_key": session_key
         })
 
