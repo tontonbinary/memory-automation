@@ -238,6 +238,82 @@ class MemoryAutomation:
         """
         return self.distiller.distill(messages)
 
+    def _process_session_file(self, session_file: str) -> Dict[str, Any]:
+        """
+        处理指定的 session 文件
+
+        Args:
+            session_file: session 文件的绝对路径
+
+        Returns:
+            处理结果
+        """
+        import json as json_module
+
+        result = {
+            "triggered": False,
+            "reason": "",
+            "items_distilled": 0,
+            "lines_written": 0,
+            "pattern_detected": None,
+            "session_key": session_file
+        }
+
+        if not os.path.exists(session_file):
+            result["reason"] = f"session 文件不存在: {session_file}"
+            return result
+
+        # 读取 session 文件
+        try:
+            messages = []
+            with open(session_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json_module.loads(line)
+                        if entry.get("type") == "message":
+                            msg_data = entry.get("message", {})
+                            content = msg_data.get("content", "")
+                            role = msg_data.get("role", "")
+                            if role in ["user", "assistant"] and content:
+                                # 处理富文本格式
+                                if isinstance(content, list):
+                                    text = " ".join(
+                                        item.get("text", "") for item in content
+                                        if isinstance(item, dict) and item.get("type") == "text"
+                                    )
+                                else:
+                                    text = str(content)
+                                if text.strip():
+                                    messages.append({
+                                        "role": role,
+                                        "content": text.strip(),
+                                        "msg_id": entry.get("id", "")
+                                    })
+                    except json_module.JSONDecodeError:
+                        continue
+        except Exception as e:
+            result["reason"] = f"读取 session 文件失败: {e}"
+            return result
+
+        if not messages:
+            result["reason"] = "session 文件中没有有效消息"
+            return result
+
+        print(f"[MemoryAutomation] 从 session 文件读取 {len(messages)} 条消息")
+
+        # 蒸馏消息
+        lines_written, items, _ = self.process_session(messages, force=True)
+
+        result["triggered"] = True
+        result["reason"] = f"处理 session 文件: {os.path.basename(session_file)}"
+        result["items_distilled"] = len(items)
+        result["lines_written"] = lines_written
+
+        return result
+
     # === 委托给 message_processor ===
 
     def process_session(self, messages: List[Dict[str, Any]],
@@ -304,12 +380,13 @@ class MemoryAutomation:
 
         return False
 
-    def run_manual(self, user_message: Optional[str] = None) -> Dict[str, Any]:
+    def run_manual(self, user_message: Optional[str] = None, session_file: Optional[str] = None) -> Dict[str, Any]:
         """
         手动触发入口
 
         Args:
             user_message: 用户消息（用于检查关键词）
+            session_file: 指定要处理的 session 文件路径（绝对路径）
 
         Returns:
             处理结果
@@ -322,6 +399,11 @@ class MemoryAutomation:
             "pattern_detected": None  # 实时模式检测结果
         }
 
+        # 如果指定了 session_file，直接处理该文件
+        if session_file:
+            print(f"[MemoryAutomation] 处理指定 session 文件: {session_file}")
+            return self._process_session_file(session_file)
+
         # 首先检查是否触发实时模式检测
         if user_message:
             pattern_result = self.detect_pattern_realtime(user_message)
@@ -332,7 +414,11 @@ class MemoryAutomation:
                 result["pattern_detected"] = pattern_result
                 # 模式检测不阻断正常触发，继续执行
 
-        # 检查关键词触发
+        # 检查关键词触发（如果有 session_file 参数则跳过关键词检查）
+        if session_file:
+            # 直接处理指定的 session 文件
+            return self._process_session_file(session_file)
+
         if user_message and not self.check_manual_trigger(user_message):
             result["reason"] = "未匹配触发关键词"
             return result
@@ -544,12 +630,21 @@ class MemoryAutomation:
 def main():
     """主入口函数"""
     if len(sys.argv) < 2:
-        print("用法: python -m memory.automation [manual|heartbeat]")
+        print("用法: python -m memory.automation [manual|heartbeat] [--session <session_file>]")
         print("  manual    - 手动触发记忆蒸馏")
         print("  heartbeat - Heartbeat 触发记忆蒸馏")
+        print("  --session <file> - 指定要处理的 session 文件（绝对路径）")
+        print("  示例: python -m memory.automation manual --session /path/to/session.reset.jsonl")
         sys.exit(1)
 
     mode = sys.argv[1].lower()
+
+    # 解析可选参数
+    session_file = None
+    for i in range(2, len(sys.argv)):
+        if sys.argv[i] == "--session" and i + 1 < len(sys.argv):
+            session_file = sys.argv[i + 1]
+            break
 
     # 创建自动化实例（agent_id 会自动检测）
     automation = MemoryAutomation()
@@ -557,12 +652,14 @@ def main():
     if mode == "manual":
         # 手动模式 - 可以尝试从环境变量获取用户消息
         user_message = os.environ.get("USER_MESSAGE", "")
-        result = automation.run_manual(user_message)
+        result = automation.run_manual(user_message, session_file=session_file)
 
         print(f"\n[结果] {result['reason']}")
         if result['triggered']:
             print(f"  - 蒸馏项: {result['items_distilled']}")
             print(f"  - 写入行: {result['lines_written']}")
+            if result.get('session_key'):
+                print(f"  - Session: {result['session_key']}")
 
     elif mode == "heartbeat":
         # Heartbeat 模式 - 只读取新消息，写入队列，不蒸馏
