@@ -1,11 +1,13 @@
 {
   "last_session_key": "agent:code:feishu:direct:ou_83d6abde1b37e26ebac7059a9bc12da3",
-  "last_processed_time": "2026-03-30T16:13:47.755502",
-  "last_distilled_messages": 111,
+  "last_processed_time": "2026-03-31T04:17:20.116083",
+  "last_distilled_messages": 10,
   "version": "1.0.0",
-  "last_processed_msg_id": "889d3cac",
+  "last_processed_msg_id": "test_msg_id_123",
   "pending_queue": [],
   "processing_old_session_key": null,
   "processing_old_session_started_at": null,
-  "updated_at": "2026-03-30T16:13:47.755529"
+  "updated_at": "2026-03-31T04:17:20.116100",
+  "agent_type": "开发型",
+  "custom_tags": []
 }

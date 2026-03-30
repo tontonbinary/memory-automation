@@ -25,6 +25,7 @@ class DistilledItem:
     improve: Optional[str] = None  # 用户纠正/改进
     source_idx: int = 0  # 原始消息序号（从1开始）
     source_message: str = ""
+    timestamp: str = ""  # 原始 timestamp 字符串（如 "2026-03-29T20:04:22.758Z"）
 
     def __post_init__(self):
         if self.tags is None:
@@ -246,14 +247,22 @@ __SESSION_CONTENT__
 
         return content.strip()
 
-    def _format_messages_for_prompt(self, messages: List[Dict[str, Any]]) -> str:
-        """将消息列表格式化为 prompt 可用的文本（带1-based序号）"""
+    def _format_messages_for_prompt(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        将消息列表格式化为 prompt 可用的文本（带1-based序号）
+
+        Returns:
+            {"text": str, "timestamps": {idx: timestamp}}  # timestamps 的 key 是 1-based 序号
+        """
         formatted_lines = []
-        msg_idx = 0  # 1-based 序号（所有消息都计数，包括被跳过的）
+        timestamps = {}  # {1-based-idx: timestamp}
+        msg_idx = 0
 
         for msg in messages:
-            msg_idx += 1  # 所有消息都递增序号（让 LLM 看到的索引与实际一致）
+            msg_idx += 1
             timestamp = msg.get("timestamp", "")
+            timestamps[msg_idx] = timestamp  # 记录每个 idx 对应的 timestamp
+            
             role = msg.get("role", "unknown")
             # content 可能是 list(富文本格式)或 string,需要统一处理
             raw_content = msg.get("content", "")
@@ -267,18 +276,17 @@ __SESSION_CONTENT__
             # 清洗工具输出噪声
             content = self._clean_content(content)
             content = content.strip()
-            # 跳过空消息和短消息（计数器已在循环开始时递增）
+            # 跳过空消息和短消息
             if len(content) < self.min_message_length:
                 continue
 
             # 角色显示名称
             role_display = "用户" if role == "user" else ("助手" if role == "assistant" else role)
 
-            # 格式化时间
+            # 格式化时间（用于显示）
             time_str = ""
             if timestamp:
                 try:
-                    # 尝试解析 ISO 格式时间
                     if isinstance(timestamp, str) and len(timestamp) >= 10:
                         time_str = f"[{timestamp[11:16]}] " if 'T' in timestamp else f"[{timestamp}] "
                 except:
@@ -286,7 +294,10 @@ __SESSION_CONTENT__
 
             formatted_lines.append(f"[{msg_idx}] {time_str}{role_display}: {content}")
 
-        return "\n\n".join(formatted_lines)
+        return {
+            "text": "\n\n".join(formatted_lines),
+            "timestamps": timestamps
+        }
 
     def _call_minimax_api(self, prompt: str) -> Optional[str]:
         """
@@ -509,7 +520,9 @@ __SESSION_CONTENT__
             return []
 
         # 格式化会话内容
-        session_content = self._format_messages_for_prompt(messages)
+        formatted = self._format_messages_for_prompt(messages)
+        session_content = formatted["text"]
+        timestamps_map = formatted["timestamps"]  # {1-based-idx: timestamp}
 
         if not session_content:
             print("[SessionDistiller] 没有足够的内容进行 LLM 蒸馏")
@@ -566,6 +579,14 @@ __SESSION_CONTENT__
                     source_idx = int(source_idx_raw) if source_idx_raw else 0
                 except (ValueError, TypeError):
                     source_idx = 0
+                
+                # 从 timestamps_map 获取 timestamp（source_idx 是 1-based）
+                # 边界检查：source_idx 可能在 LLM 看到的内容范围内，但不在 timestamps_map 中（如超出截断范围）
+                if source_idx in timestamps_map:
+                    item_timestamp = timestamps_map[source_idx]
+                else:
+                    # source_idx 超出范围，使用 session 开始时间
+                    item_timestamp = ""
 
                 item = DistilledItem(
                     item_type=item_type,
@@ -576,7 +597,8 @@ __SESSION_CONTENT__
                     oput=item_data.get("oput") if item_data.get("oput") != "null" else None,
                     improve=item_data.get("improve") if item_data.get("improve") != "null" else None,
                     source_idx=source_idx,
-                    source_message=""
+                    source_message="",
+                    timestamp=item_timestamp
                 )
 
                 # 去重检查

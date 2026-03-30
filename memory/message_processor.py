@@ -67,8 +67,11 @@ class MessageProcessor:
         # 获取第一条消息的时间戳作为 session 开始时间（用于推断时区）
         session_start_time = messages[0].get("timestamp") if messages else None
 
-        # 用 source_idx 直接查每条蒸馏项的真实时间戳
-        item_times = self._get_item_times_from_source_idx(distilled_items, messages)
+        # 从蒸馏项直接获取 timestamp（DistilledItem.timestamp 包含正确的原始时间戳）
+        item_times = []
+        for item in distilled_items:
+            ts = getattr(item, 'timestamp', '') or ''
+            item_times.append(ts if ts else session_start_time or '')
 
         # 5 类事件类型判断
         distilled_items = self._classify_event_types(distilled_items)
@@ -134,8 +137,11 @@ class MessageProcessor:
         # 获取第一条消息的时间戳
         session_start_time = all_messages[0].get("timestamp") if all_messages else None
 
-        # 用 source_idx 直接查时间
-        item_times = self._get_item_times_from_source_idx(distilled_items, all_messages)
+        # 从蒸馏项直接获取 timestamp
+        item_times = []
+        for item in distilled_items:
+            ts = item.get('timestamp', '') if isinstance(item, dict) else getattr(item, 'timestamp', '')
+            item_times.append(ts if ts else session_start_time or '')
 
         # 5 类事件类型判断
         distilled_items = self._classify_event_types(distilled_items)

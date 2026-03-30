@@ -593,19 +593,28 @@ class MemoryAutomation:
             self.state_manager.update_after_process(session_key, 0, last_msg_id)
             return result
 
-        # 处理会话
-        lines_written, items, final_msg_id = self.process_session(messages, force=True)
+        # 切块处理：避免单次 Prompt 过长
+        # 每块处理完后更新状态，确保进度不丢失
+        total_lines = 0
+        total_items = 0
+        chunks = self.session_manager.get_session_chunks(max_messages_per_chunk=200)
 
-        # 使用最后处理的消息ID更新状态
-        update_msg_id = final_msg_id or last_msg_id
-        self.state_manager.update_after_process(session_key, len(items), update_msg_id)
+        for chunk_idx, (chunk_messages, chunk_last_msg_id) in enumerate(chunks):
+            print(f"[Heartbeat] 处理块 {chunk_idx+1}/{len(chunks)}, {len(chunk_messages)} 条消息")
+            lines_written, items, final_msg_id = self.process_session(chunk_messages, force=True)
+            total_lines += lines_written
+            total_items += len(items)
+
+            # 每块处理完后立即更新状态
+            self.state_manager.update_after_process(session_key, len(items), chunk_last_msg_id)
 
         result.update({
             "triggered": True,
             "reason": "手动触发成功",
-            "items_distilled": len(items),
-            "lines_written": lines_written,
-            "session_key": session_key
+            "items_distilled": total_items,
+            "lines_written": total_lines,
+            "session_key": session_key,
+            "chunks_processed": len(chunks)
         })
 
         return result
