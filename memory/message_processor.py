@@ -70,7 +70,8 @@ class MessageProcessor:
         # 从蒸馏项直接获取 timestamp（DistilledItem.timestamp 包含正确的原始时间戳）
         item_times = []
         for item in distilled_items:
-            ts = getattr(item, 'timestamp', '') or ''
+            ts = item.get('timestamp', '') if isinstance(item, dict) else getattr(item, 'timestamp', '')
+            ts = ts or ''
             item_times.append(ts if ts else session_start_time or '')
 
         # 5 类事件类型判断
