@@ -23,6 +23,7 @@ from .message_processor import MessageProcessor
 from .pattern_detector import PatternDetector
 from .session_distiller import SessionDistiller
 from .l1_writer import L1Writer
+from .reference_manager import ReferenceManager
 
 
 class MemoryAutomation:
@@ -43,6 +44,9 @@ class MemoryAutomation:
         # 初始化组件
         self.state_manager = StateManager(self.config.get("state_file", "memory/heartbeat-state.json"))
 
+        # 初始化参考内容管理器（从 heartbeat-state.json 读取配置）
+        self.reference_manager = ReferenceManager(agent_id=self.agent_id or "code")
+
         # 初始化新模块
         self.session_manager = SessionManager(
             agent_id=self.agent_id,
@@ -52,15 +56,24 @@ class MemoryAutomation:
             agent_id=self.agent_id,
             config=self.config
         )
+
+        # 从 heartbeat-state 读取 api_key 注入 distiller
+        state = self.reference_manager._load_state()
+        api_key = state.get("api_key", "")
         self.distiller = SessionDistiller(
-            min_message_length=self.config.get("distillation", {}).get("min_message_length", 10)
+            min_message_length=self.config.get("distillation", {}).get("min_message_length", 10),
+            reference_manager=self.reference_manager
         )
+        if api_key:
+            self.distiller.llm_config["api_key"] = api_key
+
         self.message_processor = MessageProcessor(
             agent_id=self.agent_id,
             config=self.config,
             session_manager=self.session_manager,
             l1_writer=self.l1_writer,
-            distiller=self.distiller
+            distiller=self.distiller,
+            reference_manager=self.reference_manager
         )
         self.pattern_detector = PatternDetector(
             agent_id=self.agent_id,
@@ -198,6 +211,31 @@ class MemoryAutomation:
         """确保 L1 存储目录存在"""
         l1_path = self._get_l1_path()
         l1_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _check_config_status(self) -> Dict[str, Any]:
+        """
+        检查配置状态，返回是否就绪或 awaiting_confirmation
+
+        Returns:
+            {"ready": bool, "fallback": bool, "status": str, ...}
+        """
+        is_complete, missing = self.reference_manager.is_complete()
+        if is_complete:
+            return {"ready": True, "fallback": False}
+
+        # 检查是否已接受降级
+        state = self.reference_manager._load_state()
+        if state.get("fallback_accepted"):
+            return {"ready": True, "fallback": True}
+
+        missing_str = ", ".join(missing)
+        return {
+            "ready": False,
+            "fallback": False,
+            "status": "awaiting_confirmation",
+            "config_status": self.reference_manager.get_config_status(),
+            "message": f"配置不完整（缺失: {missing_str}），蒸馏质量将下降，是否继续？"
+        }
 
     def write_activation_flag(self, message: str = "Mauto 需要激活，请运行 'mauto activate' 或让用户触发一次 Mauto") -> Path:
         """
@@ -475,6 +513,19 @@ class MemoryAutomation:
             "pattern_detected": None  # 实时模式检测结果
         }
 
+        # 配置检查（新模式：等待确认）
+        config_status = self._check_config_status()
+        if not config_status["ready"]:
+            result["status"] = "awaiting_confirmation"
+            result["config_status"] = config_status["config_status"]
+            result["reason"] = config_status["message"]
+            return result
+
+        # 如果接受降级，关闭 LLM 蒸馏
+        if config_status.get("fallback"):
+            print("[MemoryAutomation] 配置不完整，使用 regex 降级蒸馏")
+            self.distiller.llm_config["enabled"] = False
+
         # 如果指定了 session_file，直接处理该文件
         if session_file:
             print(f"[MemoryAutomation] 处理指定 session 文件: {session_file}")
@@ -542,48 +593,8 @@ class MemoryAutomation:
             self.state_manager.update_after_process(session_key, 0, last_msg_id)
             return result
 
-        # ===== API Key 检查 =====
-        llm_config = self.config.get("llm", {})
-        api_key = llm_config.get("api_key")
-        api_key_asked = llm_config.get("api_key_asked", False)
-
-        if not api_key and not api_key_asked:
-            # 首次询问用户关于 API key
-            print("\n[MEMORY-AUTOMATION] API_KEY: not_configured")
-            print("memory-automation 需要配置以下信息：")
-            print("1. API key（从哪里获取？）")
-            print("2. 供应商（默认 minimax）")
-            print("3. 模型（默认 MiniMax-M2.7）")
-            print("如暂不提供，将使用 regex 蒸馏（效果较差）。")
-            # 更新状态
-            self.config["llm"]["api_key_asked"] = True
-            self._save_config()
-
         # 处理会话
         lines_written, items, final_msg_id = self.process_session(messages, force=True)
-
-        # ===== Regex 计数检查 =====
-        regex_config = self.config.get("regex", {})
-        regex_count = regex_config.get("count", 0)
-        regex_count_asked = regex_config.get("count_asked", False)
-
-        # 更新 regex 计数（每次 regex 蒸馏都计数）
-        self.config["regex"]["count"] = regex_count + 1
-        regex_count = regex_count + 1
-
-        # 检查是否达到询问阈值
-        if regex_count >= 30 and not regex_count_asked:
-            print("\n[MEMORY-AUTOMATION] REGEX_LIMIT_REACHED")
-            print("你已经使用 regex 蒸馏 30 次了，效果如何？")
-            print("是否要：")
-            print("1）提供 API key 升级到 LLM 蒸馏")
-            print("2）提供更好的蒸馏关键词/标签")
-            self.config["regex"]["count_asked"] = True
-
-        if regex_count >= 30 or regex_count_asked:
-            self.config["regex"]["count"] = 0  # 重置计数
-
-        self._save_config()
 
         # 使用最后处理的消息ID更新状态
         update_msg_id = final_msg_id or last_msg_id
@@ -639,6 +650,19 @@ class MemoryAutomation:
             "old_session_processed": False,
             "old_session_items": 0
         }
+
+        # 配置检查（新模式：等待确认）
+        config_status = self._check_config_status()
+        if not config_status["ready"]:
+            result["status"] = "awaiting_confirmation"
+            result["config_status"] = config_status["config_status"]
+            result["reason"] = config_status["message"]
+            return result
+
+        # 如果接受降级，关闭 LLM 蒸馏
+        if config_status.get("fallback"):
+            print("[MemoryAutomation] 配置不完整，使用 regex 降级蒸馏")
+            self.distiller.llm_config["enabled"] = False
 
         # 获取当前会话（只获取新消息）
         session_key, messages, last_msg_id = self.get_current_session()

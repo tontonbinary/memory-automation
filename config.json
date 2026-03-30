@@ -88,8 +88,8 @@
     "api_key_asked": true
   },
   "regex": {
-    "count": 16,
-    "count_asked": false
+    "count": 0,
+    "count_asked": true
   },
   "fallback_to_regex": true,
   "entry_point": "memory/automation.py",

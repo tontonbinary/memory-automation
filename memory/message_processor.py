@@ -11,6 +11,7 @@ from dataclasses import asdict
 from .session_distiller import SessionDistiller
 from .l1_writer import L1Writer
 from .session_manager import SessionManager
+from .reference_manager import ReferenceManager
 
 
 class MessageProcessor:
@@ -19,12 +20,14 @@ class MessageProcessor:
     def __init__(self, agent_id: str, config: Dict[str, Any],
                  session_manager: SessionManager,
                  l1_writer: L1Writer,
-                 distiller: SessionDistiller):
+                 distiller: SessionDistiller,
+                 reference_manager: Optional[ReferenceManager] = None):
         self.agent_id = agent_id
         self.config = config
         self.session_manager = session_manager
         self.l1_writer = l1_writer
         self.distiller = distiller
+        self.reference_manager = reference_manager
 
     def process_session(self, messages: List[Dict[str, Any]],
                        force: bool = False) -> Tuple[int, List[Dict[str, Any]], Optional[str]]:
@@ -66,6 +69,9 @@ class MessageProcessor:
 
         # 用 source_idx 直接查每条蒸馏项的真实时间戳
         item_times = self._get_item_times_from_source_idx(distilled_items, messages)
+
+        # 5 类事件类型判断
+        distilled_items = self._classify_event_types(distilled_items)
 
         # 写入 L1
         lines_written = self.l1_writer.write(
@@ -131,6 +137,9 @@ class MessageProcessor:
         # 用 source_idx 直接查时间
         item_times = self._get_item_times_from_source_idx(distilled_items, all_messages)
 
+        # 5 类事件类型判断
+        distilled_items = self._classify_event_types(distilled_items)
+
         # 写入 L1
         lines_written = self.l1_writer.write(
             distilled_items, session_start_time, item_times=item_times)
@@ -142,46 +151,49 @@ class MessageProcessor:
     def _get_item_times_from_source_idx(self, distilled_items: List[Dict],
                                         messages: List[Dict]) -> List[str]:
         """
-        通过 source_idx 直接查每条蒸馏项的真实时间戳
+        通过 source_idx 直接查每条蒸馏项的原始 timestamp
 
         Args:
             distilled_items: 蒸馏项列表（含 source_idx）
             messages: 原始消息列表
 
         Returns:
-            时间戳列表(HH:MM)，与 distilled_items 对齐
+            原始 timestamp 字符串列表，与 distilled_items 对齐
+            格式如 "2026-03-30T20:04:22.758Z"（UTC）或 "2026-03-30T03:05:22.758+02:00"（欧洲）
         """
-        from datetime import datetime, timedelta
-        try:
-            from zoneinfo import ZoneInfo
-        except ImportError:
-            ZoneInfo = None
-
-        def get_msg_time(msg: Dict) -> str:
-            """从消息 timestamp 提取 HH:MM"""
-            ts_utc = msg.get('timestamp', '')
-            if not ts_utc:
-                return '??:??'
-            try:
-                dt = datetime.fromisoformat(ts_utc.replace('Z', '+00:00'))
-                if ZoneInfo is not None:
-                    dt_local = dt.astimezone(ZoneInfo('Asia/Shanghai'))
-                else:
-                    dt_local = dt + timedelta(hours=8)
-                return dt_local.strftime('%H:%M')
-            except:
-                return '??:??'
-
         item_times = []
         for item in distilled_items:
             source_idx = item.get('source_idx', 0)
             # source_idx 是 1-based，messages 是 0-based
             if source_idx and 1 <= source_idx <= len(messages):
-                item_times.append(get_msg_time(messages[source_idx - 1]))
+                ts = messages[source_idx - 1].get('timestamp', '')
+                item_times.append(ts if ts else '')
             elif messages:
-                # 兜底：用第一条消息时间
-                item_times.append(get_msg_time(messages[0]))
+                item_times.append(messages[0].get('timestamp', ''))
             else:
-                item_times.append('??:??')
+                item_times.append('')
 
         return item_times
+
+    def _classify_event_types(self, distilled_items: List[Dict]) -> List[Dict]:
+        """
+        为每条蒸馏项判断事件类型（5 选 1）
+
+        Args:
+            distilled_items: 蒸馏项列表
+
+        Returns:
+            添加了 event_type 字段的蒸馏项列表
+        """
+        if not self.reference_manager:
+            for item in distilled_items:
+                item['event_type'] = 'CoreWork'
+            return distilled_items
+
+        for item in distilled_items:
+            content = item.get('content', '')
+            item_type = item.get('item_type', 'Event')
+            event_type = self.reference_manager.classify_event_type(content, item_type)
+            item['event_type'] = event_type
+
+        return distilled_items

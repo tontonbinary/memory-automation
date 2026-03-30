@@ -15,13 +15,13 @@ import urllib.error
 
 @dataclass
 class DistilledItem:
-    """蒸馏后的记忆项（7类：Event, Decision, Preference, Improve, Action, Oput, Emotion）"""
-    item_type: str  # Event, Decision, Preference, Improve, Action, Oput, Emotion
+    """蒸馏后的记忆项（7类：Event, Decision, Preference, Improve, To-do, Output, Emotion）"""
+    item_type: str  # Event, Decision, Preference, Improve, To-do, Output, Emotion
     content: str
     emotion: Optional[str] = None  # positive|negative|null
     tags: List[str] = None
-    action: Optional[str] = None  # 后续行动
-    oput: Optional[str] = None  # 成果
+    action: Optional[str] = None  # 后续行动（对应 To-do 类型）
+    oput: Optional[str] = None  # 成果（对应 Output 类型）
     improve: Optional[str] = None  # 用户纠正/改进
     source_idx: int = 0  # 原始消息序号（从1开始）
     source_message: str = ""
@@ -81,40 +81,48 @@ class SessionDistiller:
 
 如果会话内容大部分都是工具日志,请返回空的提取结果。
 
+__REFERENCE_CONTENT__
+
 ## 7种记忆类型(严格按类型分类)
 
-### 1. Event - 客观发生的事件
-- 用户或助手完成的具体事项、发现的问题
-- 示例:"session_manager发现toolResult混入"、"修复了时区转换bug"
+### 1. Event - 客观事实、问题、需求
+- 用户或助手完成的具体事项、发现的问题、提出的需求
+- 示例:"session 时间戳是 +08:00 不是 UTC"、"修复了时区转换 bug"
 
-### 2. Decision - 决策
-- 明确的决定、选择、确认
-- 示例:"决定先做Fix1和Fix2"、"确认使用Asia/Shanghai时区"
+### 2. Decision - 结论、规则、方案
+- 明确的决定、选择、确认、方案确定
+- 示例:"message_processor 直接传原始 timestamp"、"确认使用 Asia/Shanghai 时区"
 
-### 3. Preference - 偏好
-- 用户的喜好、倾向、习惯
-- 示例:"用户偏好LLM蒸馏而非正则"、"倾向简洁的代码风格"
+### 3. Preference - 用户偏好、习惯、忌讳
+- 用户的喜好、倾向、习惯、风格偏好
+- 示例:"L1 头部只写一次时区"、"倾向简洁的代码风格"
 
-### 4. Improve - 用户纠正/改进
-- 用户的批评、纠正、改进建议
-- 示例:"session_manager应该过滤toolResult"、"prompt应该更精确"
+### 4. Improve - 用户纠正/改进(重点关注)
+- 用户的批评、纠正、改进建议、明确要求改变的规则
+- 示例:"不要为错误找理由,直接承认"、"prompt 应该更精确"
 
-### 5. Action - 后续行动
-- 计划要做的、建议的后续行动
-- 示例:"修改session_distiller.py"、"重置heartbeat-state.json"
+### 5. To-do - 待办、下一步
+- 计划要做的、建议的后续行动、待办事项
+- 示例:"更新 session_distiller prompt"、"重置 heartbeat-state.json"
 
-### 6. Oput - 成果
+### 6. Output - 产出物
 - 具体产出:文件、链接、创建的东西、完成的结果
-- 示例:"输出了2026-03-30-agent.md"、"提取14项干净结果"
+- 示例:"design-log.md 已创建"、"提取 14 项干净结果"
 
-### 7. Emotion - 情绪
-- 对话中表达的情感状态
-- 示例:对进度满意(positive)、担心bug(negative)
+### 7. Emotion - 情绪(只记 2 种:烦躁/满意)
+- 只提取明显的情绪表达:满意/烦躁
+- 满意 → positive, 烦躁 → negative
+- 示例:"用户 angry trigger:用 guess"(negative)
+
+## 绝对不提取
+- Meta 对话("怎么跑脚本"、"这个怎么用")
+- 纯确认("好的"、"明白了"、"知道了")
+- 重复内容(已记过的 Decision 不再提取)
 
 ## 输出格式要求
 
 请严格按照以下 JSON 格式输出(不要有任何额外文字):
-{"items": [{"type": "Event|Decision|Preference|Improve|Action|Oput|Emotion", "content": "提炼内容(简洁,20-100字)", "emotion": "positive|negative|null", "tags": ["标签1","标签2"], "action": "后续行动或null", "oput": "成果或null", "improve": "纠正内容或null", "source_idx": 消息序号(从1开始的整数)}]}
+{"items": [{"type": "Event|Decision|Preference|Improve|To-do|Output|Emotion", "content": "提炼内容(简洁,20-100字)", "emotion": "positive|negative|null", "tags": ["标签1","标签2"], "action": "后续行动或null", "oput": "成果或null", "improve": "纠正内容或null", "source_idx": 消息序号(从1开始的整数)}]}
 
 **重要**：每条记忆必须指定 source_idx（对应上面会话内容中的消息序号，从 [1] 开始）。
 
@@ -133,22 +141,25 @@ __SESSION_CONTENT__
 ## 注意事项
 1. 只提取真正值得记忆的内容,过滤闲聊、重复、临时信息
 2. 内容要简洁具体,不要泛泛而谈
-3. 每个提取项必须指定type,不允许其他type值
+3. 每个提取项必须指定 type,不允许其他 type 值
 4. 如果没有值得提取的内容,返回 {"items": []}
-5. **必须**返回合法的JSON格式,不要添加markdown代码块标记
+5. **必须**返回合法的 JSON 格式,不要添加 markdown 代码块标记
 """
 
-    def __init__(self, min_message_length: int = 10, config_path: Optional[str] = None):
+    def __init__(self, min_message_length: int = 10, config_path: Optional[str] = None,
+                 reference_manager=None):
         """
         初始化蒸馏器
 
         Args:
             min_message_length: 最小消息长度,短于此值的消息被忽略
             config_path: 配置文件路径(用于读取 LLM API 配置)
+            reference_manager: ReferenceManager 实例,用于注入参考内容
         """
         self.min_message_length = min_message_length
         self.config = self._load_config(config_path)
         self.llm_config = self._get_llm_config()
+        self.reference_manager = reference_manager
 
     def _load_config(self, config_path: Optional[str]) -> Dict[str, Any]:
         """加载配置文件"""
@@ -242,6 +253,7 @@ __SESSION_CONTENT__
 
         for msg in messages:
             msg_idx += 1  # 所有消息都递增序号（让 LLM 看到的索引与实际一致）
+            timestamp = msg.get("timestamp", "")
             role = msg.get("role", "unknown")
             # content 可能是 list(富文本格式)或 string,需要统一处理
             raw_content = msg.get("content", "")
@@ -255,9 +267,8 @@ __SESSION_CONTENT__
             # 清洗工具输出噪声
             content = self._clean_content(content)
             content = content.strip()
-            # 跳过空消息和短消息（但计数器仍然递增）
+            # 跳过空消息和短消息（计数器已在循环开始时递增）
             if len(content) < self.min_message_length:
-                msg_idx += 1
                 continue
 
             # 角色显示名称
@@ -505,7 +516,12 @@ __SESSION_CONTENT__
             return []
 
         # 构建 prompt
-        prompt = self.DISTILLATION_PROMPT.replace("__SESSION_CONTENT__", session_content)
+        reference_content = ""
+        if self.reference_manager:
+            reference_content = self.reference_manager.build_reference_content()
+
+        prompt = self.DISTILLATION_PROMPT.replace("__REFERENCE_CONTENT__", reference_content)
+        prompt = prompt.replace("__SESSION_CONTENT__", session_content)
 
         # 调用 LLM API
         print("[SessionDistiller] 正在调用 LLM 进行智能蒸馏...")
@@ -524,7 +540,7 @@ __SESSION_CONTENT__
 
         # 转换为 DistilledItem 对象
         distilled_items = []
-        VALID_TYPES = {"Event", "Decision", "Preference", "Improve", "Action", "Oput", "Emotion"}
+        VALID_TYPES = {"Event", "Decision", "Preference", "Improve", "To-do", "Output", "Emotion", "Action", "Oput"}
         for item_data in items_data:
             try:
                 # 验证必要字段（支持 type 或 item_type）
@@ -532,9 +548,16 @@ __SESSION_CONTENT__
                 if not type_val or "content" not in item_data:
                     continue
 
-                # 确保 item_type 有效（不区分大小写）
-                item_type = type_val.capitalize()
-                if item_type not in VALID_TYPES:
+                # 确保 item_type 有效（不区分大小写，兼容旧类型和带连字符类型）
+                item_type = type_val.strip()
+                type_lower = item_type.lower()
+                if type_lower == "to-do" or type_lower == "todo" or type_lower == "action":
+                    item_type = "To-do"
+                elif type_lower == "output" or type_lower == "oput":
+                    item_type = "Output"
+                elif type_lower in ["event", "decision", "preference", "improve", "emotion"]:
+                    item_type = type_lower.capitalize()
+                elif item_type not in VALID_TYPES:
                     item_type = "Event"  # 默认类型
 
                 # 构建 DistilledItem（新格式7类）
