@@ -137,7 +137,7 @@ print(result)
   "last_session_key": "agent:code:session:xxx",
   "last_processed_time": "2026-03-26T14:32:00",
   "last_distilled_messages": 5,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "updated_at": "2026-03-26T14:32:00"
 }
 ```

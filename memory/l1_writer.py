@@ -5,9 +5,10 @@ L1 Writer - L1 存储写入模块
 """
 
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 
 
 class L1Writer:
@@ -18,36 +19,67 @@ class L1Writer:
         self.config = config
 
     def _get_l1_path(self, date_str: str = None) -> Path:
-        """
-        获取当前 L1 文件路径
-        
-        Args:
-            date_str: 日期字符串 (YYYY-MM-DD)，None 则使用当前日期
-        """
+        """获取当前 L1 文件路径"""
         if date_str is None:
             date_str = datetime.now().strftime("%Y-%m-%d")
-
-        # 从配置构建路径
         template = self.config.get("l1_template",
             "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md")
-
         path_str = template.format(agent=self.agent_id, date=date_str)
         return Path(path_str).expanduser()
 
-    def _format_l1_entry(self, item: Dict[str, Any], line_number: int = 0, 
-                         entry_time: str = None, session_date: str = None) -> str:
+    def _infer_timezone(self, timestamp: str) -> Tuple[str, str]:
         """
-        格式化为 L1 存储格式
+        从 timestamp 推断时区和显示时间
 
         Args:
-            item: 蒸馏项
-            line_number: 行号
-            entry_time: 条目时间戳 (HH:MM)，None 则使用当前时间
-            session_date: session 日期 (YYYY-MM-DD)，用于来源字段
+            timestamp: ISO 8601 时间字符串（可能带 Z）
 
         Returns:
-            Markdown 格式的记忆条目
+            (timezone_label, time_display)
+            timezone_label: "Asia/Shanghai (UTC+8)" | "UTC" | "Unknown"
+            time_display: "HH:MM" 格式
         """
+        if not timestamp:
+            return "Unknown", "??:??"
+        try:
+            ts = timestamp.replace('Z', '+00:00')
+            dt = datetime.fromisoformat(ts)
+            if timestamp.endswith('Z'):
+                # UTC 时间，尝试转换到 Asia/Shanghai
+                try:
+                    from zoneinfo import ZoneInfo
+                    dt_local = dt.astimezone(ZoneInfo("Asia/Shanghai"))
+                    tz_label = "Asia/Shanghai (UTC+8)"
+                except ImportError:
+                    dt_local = dt + timedelta(hours=8)
+                    tz_label = "Asia/Shanghai (UTC+8)"  # 假设为上海
+            else:
+                # 非 UTC，直接用本地
+                dt_local = dt
+                tz_label = "Local"
+            return tz_label, dt_local.strftime("%H:%M")
+        except:
+            return "Unknown", "??:??"
+
+    def _detect_file_timezone(self, content: str) -> Optional[str]:
+        """
+        从现有文件内容中读取时区信息
+
+        Returns:
+            时区标签，如 "Asia/Shanghai (UTC+8)"，或 None（未找到）
+        """
+        # 匹配 "# 时区: Asia/Shanghai (UTC+8)" 或 "# 时区变更: UTC"
+        for line in content.split('\n'):
+            line = line.strip()
+            if line.startswith('# 时区变更:'):
+                return line[6:].strip()
+            if line.startswith('# 时区:'):
+                return line[5:].strip()
+        return None
+
+    def _format_l1_entry(self, item: Dict[str, Any], line_number: int = 0,
+                         entry_time: str = None) -> str:
+        """格式化为 L1 存储格式"""
         if entry_time is None:
             entry_time = datetime.now().strftime("%H:%M")
 
@@ -73,102 +105,97 @@ class L1Writer:
             tag_str = " ".join([f"#{tag}" for tag in item["tags"]])
             lines.append(f"- **标签**：`{tag_str}`")
 
-        # 添加来源信息（使用 session 原始日期）
-        if session_date is None:
-            session_date = datetime.now().strftime("%Y-%m-%d")
-        lines.append(f"- **来源**：session/{session_date[5:]}#L{line_number}")
+        # 来源：session/MM-DD#L行号
+        session_date = item.get("session_date", "")
+        lines.append(f"- **来源**：session/{session_date[5:] if session_date else '??-??'}#L{line_number}")
 
-        lines.append("")  # 空行分隔
-
+        lines.append("")
         return "\n".join(lines)
 
-    def write(self, items: List[Dict[str, Any]], 
+    def write(self, items: List[Dict[str, Any]],
               session_start_time: str = None,
               session_end_time: str = None,
               item_times: List[str] = None) -> int:
         """
         写入 L1 存储文件（两段式格式）
 
-        第一段：标签索引（启动时只读这个）
-        第二段：完整日志（按需调取）
-
         Args:
             items: 蒸馏项列表
             session_start_time: session 开始时间戳 (ISO 8601 格式)
-            session_end_time: session 结束时间戳 (ISO 8601 格式)
-            item_times: 可选，每项的时间戳列表(HH:MM)，与items对齐。
-                        如不提供，则所有项使用session_start_time。
+            session_end_time: session 结束时间戳
+            item_times: 每项的时间戳列表(HH:MM)，与 items 对齐
 
         Returns:
             写入行数
         """
-        # 从 session 时间计算日期和条目时间戳
+        # 从第一条消息推断时区
+        if session_start_time:
+            current_tz, _ = self._infer_timezone(session_start_time)
+        else:
+            current_tz = "Unknown"
+
+        # 推断日期
         if session_start_time:
             try:
-                # 解析 ISO 8601 时间（处理 Z 后缀为 UTC）
-                start_dt = datetime.fromisoformat(session_start_time.replace('Z', '+00:00'))
-                # 转换到 Asia/Shanghai 时区（UTC+8）
-                try:
-                    from zoneinfo import ZoneInfo
-                    start_dt = start_dt.astimezone(ZoneInfo("Asia/Shanghai"))
-                except ImportError:
-                    # zoneinfo 不可用时，手动加 8 小时（适用于 Python < 3.9 或无 zoneinfo 的系统）
-                    from datetime import timedelta
-                    start_dt = start_dt + timedelta(hours=8)
-                date_str = start_dt.strftime("%Y-%m-%d")
-                entry_time_default = start_dt.strftime("%H:%M")
-            except (ValueError, AttributeError):
-                # 解析失败，使用当前时间
+                ts = session_start_time.replace('Z', '+00:00')
+                dt = datetime.fromisoformat(ts)
+                if session_start_time.endswith('Z'):
+                    try:
+                        from zoneinfo import ZoneInfo
+                        dt = dt.astimezone(ZoneInfo("Asia/Shanghai"))
+                    except ImportError:
+                        dt = dt + timedelta(hours=8)
+                date_str = dt.strftime("%Y-%m-%d")
+            except:
                 date_str = datetime.now().strftime("%Y-%m-%d")
-                entry_time_default = datetime.now().strftime("%H:%M")
         else:
             date_str = datetime.now().strftime("%Y-%m-%d")
-            entry_time_default = datetime.now().strftime("%H:%M")
 
-        # per-item 时间戳（如果提供了）
         has_item_times = item_times is not None and len(item_times) >= len(items)
-
         l1_path = self._get_l1_path(date_str)
-
-        # 确保目录存在
         l1_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # 检查文件是否存在
         is_new_file = not l1_path.exists()
 
-        # 读取现有内容并计算行数（只读一次）
+        # 读取现有内容
         existing_content = ""
         start_line = 1
+        file_timezone = None
         if not is_new_file:
             with open(l1_path, 'r', encoding='utf-8') as f:
                 existing_content = f.read()
-                # 从已读取的内容计算行数（无需再次读取文件）
-                start_line = len(existing_content.splitlines()) + 1
+            start_line = len(existing_content.splitlines()) + 1
+            file_timezone = self._detect_file_timezone(existing_content)
 
         # 构建新的标签索引行
         new_index_lines = []
         for idx, item in enumerate(items):
-            item_time = item_times[idx] if has_item_times else entry_time_default
+            item_time = item_times[idx] if has_item_times else '??:??'
             tags_str = " ".join([f"#{tag}" for tag in item.get("tags", [])]) if item.get("tags") else "-"
-            # 索引行格式：| 时间 | 标签 | 类型 | 位置 |
             index_entry = f"| {item_time} | {tags_str} | {item['item_type']} | ## {item_time} |"
             new_index_lines.append(index_entry)
+            item['session_date'] = date_str
 
-        # 构建新的完整日志条目
+        # 构建完整日志条目
         new_log_entries = []
         for idx, item in enumerate(items):
-            item_time = item_times[idx] if has_item_times else entry_time_default
-            entry = self._format_l1_entry(item, start_line + idx, item_time, date_str)
+            item_time = item_times[idx] if has_item_times else '??:??'
+            entry = self._format_l1_entry(item, start_line + idx, item_time)
             new_log_entries.append(entry)
 
-        # 写入文件
+        # 是否需要时区变更标记
+        tz_changed = (file_timezone is not None and
+                      current_tz != "Unknown" and
+                      file_timezone != current_tz)
+
+        # 写入
         lines_written = 0
         with open(l1_path, 'w', encoding='utf-8') as f:
 
             if is_new_file:
-                # 新文件：写入完整的两段式结构
-                f.write(f"# Memory Log - {date_str}\n\n")
-                lines_written += 2
+                # 新文件：写入完整两段式结构 + 时区头部
+                f.write(f"# Memory Log - {date_str}\n")
+                f.write(f"# 时区: {current_tz}\n\n")
+                lines_written += 3
 
                 # 第一段：标签索引
                 f.write("# L1 标签索引\n\n")
@@ -178,7 +205,6 @@ class L1Writer:
                     f.write(line + "\n")
                     lines_written += 1
 
-                # 分隔符
                 f.write("\n---\n\n")
                 lines_written += 2
 
@@ -186,46 +212,58 @@ class L1Writer:
                 f.write("# L1 完整日志\n\n")
                 lines_written += 2
 
-                # 写入日志条目
                 for entry in new_log_entries:
                     f.write(entry + "\n")
                     lines_written += entry.count("\n") + 1
+
             else:
                 # 已有文件：保留第一段，追加到第二段
-                # 找到分隔符位置
                 parts = existing_content.split("\n---\n")
                 if len(parts) >= 2:
-                    # 重写第一段（标签索引）
                     first_part = parts[0]
+                    # 如果没有时区头部，插入一个
+                    if not first_part.startswith("# 时区:"):
+                        first_lines = first_part.split("\n")
+                        insert_pos = 0
+                        for i, line in enumerate(first_lines):
+                            if line.startswith("# Memory Log"):
+                                insert_pos = i + 2  # after "# Memory Log - date"
+                                break
+                        first_lines.insert(insert_pos, f"# 时区: {current_tz}")
+                        first_part = "\n".join(first_lines)
+
                     f.write(first_part + "\n")
                     lines_written += len(first_part.split("\n"))
 
-                    # 追加新的索引行
+                    # 追加新索引行
                     for line in new_index_lines:
                         f.write(line + "\n")
                         lines_written += 1
 
-                    # 分隔符和第二段
                     f.write("\n---\n\n")
                     lines_written += 2
 
-                    # 写入第二段标题（如果被删除了）
+                    # 第二段
                     second_part = parts[1]
-                    if not second_part.strip().startswith("# L1 完整日志"):
-                        f.write("# L1 完整日志\n\n")
-                        lines_written += 2
-                    else:
-                        f.write(second_part)
-                        lines_written += len(second_part.split("\n"))
+                    # 检查是否有时区变更
+                    if tz_changed and not second_part.strip().startswith("# 时区变更"):
+                        # 插入时区变更标记
+                        second_part = f"# 时区变更: {current_tz}\n\n" + second_part
+                    elif not second_part.strip().startswith("# L1 完整日志"):
+                        second_part = "# L1 完整日志\n\n" + second_part
 
-                    # 追加完整日志
+                    f.write(second_part)
+                    lines_written += len(second_part.split("\n"))
+
+                    # 追加新日志
                     for entry in new_log_entries:
                         f.write(entry + "\n")
                         lines_written += entry.count("\n") + 1
                 else:
-                    # 格式不对，当作新文件处理
-                    f.write(f"# Memory Log - {date_str}\n\n")
-                    lines_written += 2
+                    # 格式损坏，当新文件处理
+                    f.write(f"# Memory Log - {date_str}\n")
+                    f.write(f"# 时区: {current_tz}\n\n")
+                    lines_written += 3
                     f.write("# L1 标签索引\n\n")
                     f.write("| 时间 | 标签 | 类型 | 位置 |\n")
                     f.write("|------|------|------|------|\n")
@@ -242,23 +280,11 @@ class L1Writer:
         return lines_written
 
     def write_pending_queue(self, messages: List[Dict[str, Any]]) -> Path:
-        """
-        将新消息写入待处理队列文件
-
-        Args:
-            messages: 待处理的消息列表
-
-        Returns:
-            队列文件路径
-        """
-        # 构建 pending_queue.json 路径（与 L1 同目录）
+        """将新消息写入待处理队列文件"""
         l1_path = self._get_l1_path()
         queue_path = l1_path.parent / "pending_queue.json"
-
-        # 确保目录存在
         queue_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 构建队列数据
         queue_data = {
             "pending_count": len(messages),
             "messages": [
@@ -272,7 +298,6 @@ class L1Writer:
             ]
         }
 
-        # 写入文件
         with open(queue_path, 'w', encoding='utf-8') as f:
             json.dump(queue_data, f, ensure_ascii=False, indent=2)
 

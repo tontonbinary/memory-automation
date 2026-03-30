@@ -23,6 +23,7 @@ class DistilledItem:
     action: Optional[str] = None  # 后续行动
     oput: Optional[str] = None  # 成果
     improve: Optional[str] = None  # 用户纠正/改进
+    source_idx: int = 0  # 原始消息序号（从1开始）
     source_message: str = ""
 
     def __post_init__(self):
@@ -113,7 +114,9 @@ class SessionDistiller:
 ## 输出格式要求
 
 请严格按照以下 JSON 格式输出(不要有任何额外文字):
-{"items": [{"type": "Event|Decision|Preference|Improve|Action|Oput|Emotion", "content": "提炼内容(简洁,20-100字)", "emotion": "positive|negative|null", "tags": ["标签1","标签2"], "action": "后续行动或null", "oput": "成果或null", "improve": "纠正内容或null"}]}
+{"items": [{"type": "Event|Decision|Preference|Improve|Action|Oput|Emotion", "content": "提炼内容(简洁,20-100字)", "emotion": "positive|negative|null", "tags": ["标签1","标签2"], "action": "后续行动或null", "oput": "成果或null", "improve": "纠正内容或null", "source_idx": 消息序号(从1开始的整数)}]}
+
+**重要**：每条记忆必须指定 source_idx（对应上面会话内容中的消息序号，从 [1] 开始）。
 
 ## 标签建议(选2-3个)
 - 技术:coding, devops, backend, api, bug, feature
@@ -233,10 +236,12 @@ __SESSION_CONTENT__
         return content.strip()
 
     def _format_messages_for_prompt(self, messages: List[Dict[str, Any]]) -> str:
-        """将消息列表格式化为 prompt 可用的文本"""
+        """将消息列表格式化为 prompt 可用的文本（带1-based序号）"""
         formatted_lines = []
+        msg_idx = 0  # 1-based 序号（所有消息都计数，包括被跳过的）
 
         for msg in messages:
+            msg_idx += 1  # 所有消息都递增序号（让 LLM 看到的索引与实际一致）
             role = msg.get("role", "unknown")
             # content 可能是 list(富文本格式)或 string,需要统一处理
             raw_content = msg.get("content", "")
@@ -250,10 +255,9 @@ __SESSION_CONTENT__
             # 清洗工具输出噪声
             content = self._clean_content(content)
             content = content.strip()
-            timestamp = msg.get("timestamp", "")
-
-            # 跳过空消息和短消息
+            # 跳过空消息和短消息（但计数器仍然递增）
             if len(content) < self.min_message_length:
+                msg_idx += 1
                 continue
 
             # 角色显示名称
@@ -269,7 +273,7 @@ __SESSION_CONTENT__
                 except:
                     pass
 
-            formatted_lines.append(f"{time_str}{role_display}: {content}")
+            formatted_lines.append(f"[{msg_idx}] {time_str}{role_display}: {content}")
 
         return "\n\n".join(formatted_lines)
 
@@ -534,6 +538,12 @@ __SESSION_CONTENT__
                     item_type = "Event"  # 默认类型
 
                 # 构建 DistilledItem（新格式7类）
+                source_idx_raw = item_data.get("source_idx", 0)
+                try:
+                    source_idx = int(source_idx_raw) if source_idx_raw else 0
+                except (ValueError, TypeError):
+                    source_idx = 0
+
                 item = DistilledItem(
                     item_type=item_type,
                     content=item_data.get("content", ""),
@@ -542,6 +552,7 @@ __SESSION_CONTENT__
                     action=item_data.get("action") if item_data.get("action") != "null" else None,
                     oput=item_data.get("oput") if item_data.get("oput") != "null" else None,
                     improve=item_data.get("improve") if item_data.get("improve") != "null" else None,
+                    source_idx=source_idx,
                     source_message=""
                 )
 

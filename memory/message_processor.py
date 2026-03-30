@@ -61,14 +61,15 @@ class MessageProcessor:
             last_msg_id = messages[-1].get("msg_id") if messages else None
             return 0, [], last_msg_id
 
-        # 获取第一条消息的时间戳作为 session 开始时间
+        # 获取第一条消息的时间戳作为 session 开始时间（用于推断时区）
         session_start_time = messages[0].get("timestamp") if messages else None
 
-        # 计算 per-item 时间戳：每个蒸馏项匹配最相关的原始消息
-        item_times = self._compute_item_times(distilled_items, messages)
+        # 用 source_idx 直接查每条蒸馏项的真实时间戳
+        item_times = self._get_item_times_from_source_idx(distilled_items, messages)
 
         # 写入 L1
-        lines_written = self.l1_writer.write(distilled_items, session_start_time, item_times=item_times)
+        lines_written = self.l1_writer.write(
+            distilled_items, session_start_time, item_times=item_times)
 
         print(f"[MessageProcessor] 已写入 {lines_written} 行，提取 {len(distilled_items)} 项")
 
@@ -124,77 +125,63 @@ class MessageProcessor:
             print("[MessageProcessor] 旧 session 未提取到有效信息")
             return 0, []
 
-        # 获取第一条消息的时间戳作为 session 开始时间
+        # 获取第一条消息的时间戳
         session_start_time = all_messages[0].get("timestamp") if all_messages else None
 
-        # 计算 per-item 时间戳
-        item_times = self._compute_item_times(distilled_items, all_messages)
+        # 用 source_idx 直接查时间
+        item_times = self._get_item_times_from_source_idx(distilled_items, all_messages)
 
         # 写入 L1
-        lines_written = self.l1_writer.write(distilled_items, session_start_time, item_times=item_times)
+        lines_written = self.l1_writer.write(
+            distilled_items, session_start_time, item_times=item_times)
 
         print(f"[MessageProcessor] 旧 session 已写入 {lines_written} 行，提取 {len(distilled_items)} 项")
 
         return len(distilled_items), distilled_items
 
-    def _compute_item_times(self, distilled_items: List[Dict], messages: List[Dict]) -> List[str]:
+    def _get_item_times_from_source_idx(self, distilled_items: List[Dict],
+                                        messages: List[Dict]) -> List[str]:
         """
-        计算每个蒸馏项的时间戳：匹配最相关的原始消息，使用该消息的时间戳
+        通过 source_idx 直接查每条蒸馏项的真实时间戳
 
         Args:
-            distilled_items: 蒸馏项列表
+            distilled_items: 蒸馏项列表（含 source_idx）
             messages: 原始消息列表
 
         Returns:
-            时间戳列表(HH:MM)，与distilled_items对齐
+            时间戳列表(HH:MM)，与 distilled_items 对齐
         """
-        import re
         from datetime import datetime, timedelta
         try:
             from zoneinfo import ZoneInfo
         except ImportError:
             ZoneInfo = None
 
-        # 提取消息时间
         def get_msg_time(msg: Dict) -> str:
+            """从消息 timestamp 提取 HH:MM"""
             ts_utc = msg.get('timestamp', '')
+            if not ts_utc:
+                return '??:??'
             try:
                 dt = datetime.fromisoformat(ts_utc.replace('Z', '+00:00'))
                 if ZoneInfo is not None:
-                    dt_sh = dt.astimezone(ZoneInfo('Asia/Shanghai'))
+                    dt_local = dt.astimezone(ZoneInfo('Asia/Shanghai'))
                 else:
-                    # zoneinfo 不可用时手动加 8 小时
-                    dt_sh = dt + timedelta(hours=8)
-                return dt_sh.strftime('%H:%M')
+                    dt_local = dt + timedelta(hours=8)
+                return dt_local.strftime('%H:%M')
             except:
                 return '??:??'
 
-        def get_msg_words(msg: Dict) -> set:
-            content = msg.get('content', '')
-            if isinstance(content, list):
-                content = ' '.join(c.get('text','') for c in content if isinstance(c,dict))
-            return set(re.findall(r'\w{3,}', str(content).lower()))
-
-        def get_item_words(item_content: str) -> set:
-            return set(re.findall(r'\w{3,}', str(item_content).lower()))
-
         item_times = []
         for item in distilled_items:
-            item_words = get_item_words(item.get('content', ''))
-            best_j = -1
-            best_score = 0
-            for j, msg in enumerate(messages):
-                msg_words = get_msg_words(msg)
-                if not item_words or not msg_words:
-                    continue
-                score = len(item_words & msg_words) / len(item_words | msg_words)
-                if score > best_score:
-                    best_score = score
-                    best_j = j
-            if best_j >= 0 and best_score >= 0.02:
-                item_times.append(get_msg_time(messages[best_j]))
+            source_idx = item.get('source_idx', 0)
+            # source_idx 是 1-based，messages 是 0-based
+            if source_idx and 1 <= source_idx <= len(messages):
+                item_times.append(get_msg_time(messages[source_idx - 1]))
+            elif messages:
+                # 兜底：用第一条消息时间
+                item_times.append(get_msg_time(messages[0]))
             else:
-                # 找不到匹配，使用第一条消息时间
-                item_times.append(get_msg_time(messages[0]) if messages else '??:??')
+                item_times.append('??:??')
 
         return item_times
