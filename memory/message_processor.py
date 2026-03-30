@@ -149,15 +149,22 @@ class MessageProcessor:
             时间戳列表(HH:MM)，与distilled_items对齐
         """
         import re
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
+        from datetime import datetime, timedelta
+        try:
+            from zoneinfo import ZoneInfo
+        except ImportError:
+            ZoneInfo = None
 
         # 提取消息时间
         def get_msg_time(msg: Dict) -> str:
             ts_utc = msg.get('timestamp', '')
             try:
                 dt = datetime.fromisoformat(ts_utc.replace('Z', '+00:00'))
-                dt_sh = dt.astimezone(ZoneInfo('Asia/Shanghai'))
+                if ZoneInfo is not None:
+                    dt_sh = dt.astimezone(ZoneInfo('Asia/Shanghai'))
+                else:
+                    # zoneinfo 不可用时手动加 8 小时
+                    dt_sh = dt + timedelta(hours=8)
                 return dt_sh.strftime('%H:%M')
             except:
                 return '??:??'

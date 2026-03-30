@@ -108,8 +108,13 @@ class L1Writer:
                 # 解析 ISO 8601 时间（处理 Z 后缀为 UTC）
                 start_dt = datetime.fromisoformat(session_start_time.replace('Z', '+00:00'))
                 # 转换到 Asia/Shanghai 时区（UTC+8）
-                from zoneinfo import ZoneInfo
-                start_dt = start_dt.astimezone(ZoneInfo("Asia/Shanghai"))
+                try:
+                    from zoneinfo import ZoneInfo
+                    start_dt = start_dt.astimezone(ZoneInfo("Asia/Shanghai"))
+                except ImportError:
+                    # zoneinfo 不可用时，手动加 8 小时（适用于 Python < 3.9 或无 zoneinfo 的系统）
+                    from datetime import timedelta
+                    start_dt = start_dt + timedelta(hours=8)
                 date_str = start_dt.strftime("%Y-%m-%d")
                 entry_time_default = start_dt.strftime("%H:%M")
             except (ValueError, AttributeError):
