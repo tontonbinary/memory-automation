@@ -212,6 +212,41 @@ class MemoryAutomation:
         l1_path = self._get_l1_path()
         l1_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _ensure_heartbeat_file(self) -> bool:
+        """
+        确保 heartbeat 文件存在于 agent workspace
+
+        首次运行时自动创建，后续跳过。
+
+        Returns:
+            True if heartbeat file exists or was created, False on error
+        """
+        if not self.agent_id:
+            return False
+
+        heartbeat_path = Path.home() / ".openclaw" / "workspaces" / self.agent_id / "workspace" / "HEARTBEAT.md"
+
+        # 如果已存在，跳过
+        if heartbeat_path.exists():
+            return True
+
+        # 创建 heartbeat 文件
+        heartbeat_content = f"""# HEARTBEAT.md
+
+# Keep this file empty (or with only comments) to skip heartbeat API calls.
+
+# Memory Automation - 自动将会话蒸馏到 L1 记忆层
+cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbeat --agent {self.agent_id}
+"""
+        try:
+            heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+            heartbeat_path.write_text(heartbeat_content, encoding='utf-8')
+            print(f"[MemoryAutomation] ✅ Heartbeat 文件已创建: {heartbeat_path}")
+            return True
+        except Exception as e:
+            print(f"[MemoryAutomation] ⚠️ 无法创建 heartbeat 文件: {e}")
+            return False
+
     def _check_config_status(self) -> Dict[str, Any]:
         """
         检查配置状态，返回是否就绪或 awaiting_confirmation
@@ -659,6 +694,9 @@ class MemoryAutomation:
             "old_session_processed": False,
             "old_session_items": 0
         }
+
+        # 首次运行检查：确保 heartbeat 文件存在
+        self._ensure_heartbeat_file()
 
         # 配置检查（新模式：等待确认）
         config_status = self._check_config_status()
