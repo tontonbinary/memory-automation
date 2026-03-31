@@ -18,7 +18,7 @@ class DistilledItem:
     """蒸馏后的记忆项（7类：Event, Decision, Preference, Improve, To-do, Output, Emotion）"""
     item_type: str  # Event, Decision, Preference, Improve, To-do, Output, Emotion
     content: str
-    emotion: Optional[str] = None  # positive|negative|null
+    emotion: Optional[str] = None  # 积极|负面|null
     tags: List[str] = None
     action: Optional[str] = None  # 后续行动（对应 To-do 类型）
     oput: Optional[str] = None  # 成果（对应 Output 类型）
@@ -112,8 +112,8 @@ __REFERENCE_CONTENT__
 
 ### 7. Emotion - 情绪(只记 2 种:烦躁/满意)
 - 只提取明显的情绪表达:满意/烦躁
-- 满意 → positive, 烦躁 → negative
-- 示例:"用户 angry trigger:用 guess"(negative)
+- 满意 → 积极, 烦躁 → 负面
+- 示例:"用户 angry trigger:用 guess"(负面)
 
 ## 绝对不提取
 - Meta 对话("怎么跑脚本"、"这个怎么用")
@@ -123,7 +123,7 @@ __REFERENCE_CONTENT__
 ## 输出格式要求
 
 请严格按照以下 JSON 格式输出(不要有任何额外文字):
-{"items": [{"type": "Event|Decision|Preference|Improve|To-do|Output|Emotion", "content": "提炼内容(简洁,20-100字)", "emotion": "positive|negative|null", "tags": ["标签1","标签2"], "action": "后续行动或null", "oput": "成果或null", "improve": "纠正内容或null", "source_idx": 消息序号(从1开始的整数)}]}
+{"items": [{"type": "Event|Decision|Preference|Improve|To-do|Output|Emotion", "content": "提炼内容(简洁,20-100字)", "emotion": "积极|负面|null", "tags": ["标签1","标签2"], "action": "后续行动或null", "oput": "成果或null", "improve": "纠正内容或null", "source_idx": 消息序号(从1开始的整数)}]}
 
 **重要**：每条记忆必须指定 source_idx（对应上面会话内容中的消息序号，从 [1] 开始）。
 
@@ -725,10 +725,10 @@ __SESSION_CONTENT__
         """检测情绪关键词"""
         for word in self.EMOTION_POSITIVE:
             if word in content:
-                return "positive"
+                return "积极"
         for word in self.EMOTION_NEGATIVE:
             if word in content:
-                return "negative"
+                return "负面"
         return None
 
     def _generate_tags(self, item_type: str, content: str, role: str) -> List[str]:
