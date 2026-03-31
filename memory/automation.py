@@ -793,13 +793,15 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 def main():
     """主入口函数"""
     if len(sys.argv) < 2:
-        print("用法: python -m memory.automation [manual|heartbeat] [--agent <agent_id>] [--session <session_file>]")
+        print("用法: python -m memory.automation [manual|heartbeat|old-session] [--agent <agent_id>] [--session <session_file>]")
         print("  manual    - 手动触发记忆蒸馏")
         print("  heartbeat - Heartbeat 触发记忆蒸馏")
+        print("  old-session <key> - 处理已 reset 的旧 session")
         print("  --agent <id> - 指定 agent ID（必需）")
         print("  --session <file> - 指定要处理的 session 文件（绝对路径）")
         print("  示例: python -m memory.automation manual --agent code")
         print("  示例: python -m memory.automation heartbeat --agent xiaoxian")
+        print("  示例: python -m memory.automation old-session 'agent:xiaoxian:feishu:direct:ou_xxx' --agent code")
         sys.exit(1)
 
     mode = sys.argv[1].lower()
@@ -830,6 +832,18 @@ def main():
             print(f"  - 写入行: {result['lines_written']}")
             if result.get('session_key'):
                 print(f"  - Session: {result['session_key']}")
+
+    elif mode == "old-session":
+        # 处理已 reset 的旧 session
+        if len(sys.argv) < 3:
+            print("用法: python -m memory.automation old-session <session_key> [--agent <agent_id>]")
+            print("  session_key - 要处理的旧 session key")
+            print("  示例: python -m memory.automation old-session 'agent:xiaoxian:feishu:direct:ou_xxx'")
+            sys.exit(1)
+        old_session_key = sys.argv[2]
+        print(f"[MemoryAutomation] 处理旧 session: {old_session_key}")
+        result = automation.process_old_session(old_session_key)
+        print(f"\n[结果] 蒸馏项: {result[0]}, items: {len(result[1]) if result[1] else 0}")
 
     elif mode == "heartbeat":
         # Heartbeat 模式 - 只读取新消息，写入队列，不蒸馏

@@ -22,6 +22,7 @@ config:
 entry_points:
   manual: "memory/automation.py"
   heartbeat: "memory/automation.py"
+  old-session: "memory/automation.py"
 ---
 
 # Memory Automation Skill
