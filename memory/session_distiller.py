@@ -15,15 +15,17 @@ import urllib.error
 
 @dataclass
 class DistilledItem:
-    """蒸馏后的记忆项（7类：Event, Decision, Preference, Improve, Action, Oput, Emotion）"""
-    item_type: str  # Event, Decision, Preference, Improve, Action, Oput, Emotion
+    """蒸馏后的记忆项（7类：Event, Decision, Preference, Improve, To-do, Output, Emotion）"""
+    item_type: str  # Event, Decision, Preference, Improve, To-do, Output, Emotion
     content: str
-    emotion: Optional[str] = None  # positive|negative|null
+    emotion: Optional[str] = None  # 积极|负面|null
     tags: List[str] = None
-    action: Optional[str] = None  # 后续行动
-    oput: Optional[str] = None  # 成果
+    action: Optional[str] = None  # 后续行动（对应 To-do 类型）
+    oput: Optional[str] = None  # 成果（对应 Output 类型）
     improve: Optional[str] = None  # 用户纠正/改进
+    source_idx: int = 0  # 原始消息序号（从1开始）
     source_message: str = ""
+    timestamp: str = ""  # 原始 timestamp 字符串（如 "2026-03-29T20:04:22.758Z"）
 
     def __post_init__(self):
         if self.tags is None:
@@ -69,83 +71,125 @@ class SessionDistiller:
     EMOTION_NEGATIVE = ["着急", "焦虑", "担心", "困惑", "麻烦", "头痛", "糟糕", "错误", "失败"]
 
     # LLM 蒸馏 Prompt 模板(使用 str.replace 格式化,避免 { } 占位符冲突)
-    DISTILLATION_PROMPT = """你是一名智能会话分析助手,负责从对话记录中提取关键信息。
+    DISTILLATION_PROMPT = """## 角色
+Session Distiller - 将对话历史提炼为结构化记忆
 
-## 重要:工具调用结果必须忽略
-以下内容是**工具执行日志**,不是用户对话,**必须完全忽略**,不要从中提取任何信息:
-- 包含 "toolResult:" 或 "tool_result:" 的行
-- 包含 "<frozen runpy>" 或 "Exec result:" 的行
-- 包含 ".md Template" 或 "SKILL.md" 的文档片段
-- 代码块、文件内容dump
+## 7类记忆标签
 
-如果会话内容大部分都是工具日志,请返回空的提取结果。
+### 1. Event - 客观事实、问题、需求（包括踩坑）
+- "发现bug"、"路径是/opt/xx"、"要安装依赖"
+- "试了A方案不行"、"B方案也失败" → 踩坑也属Event
 
-## 7种记忆类型(严格按类型分类)
+### 2. Decision - 结论、方案（无纠错语义）
+- "决定用Vue"、"确认方案A"
+- ❌ 不含"不对"、"应该"、"改"、"有问题"
 
-### 1. Event - 客观发生的事件
-- 用户或助手完成的具体事项、发现的问题
-- 示例:"session_manager发现toolResult混入"、"修复了时区转换bug"
+### 3. Improve - 纠正（有纠错语义+良好结果）
+- 关键词："不对"、"改"、"有问题"、"应该用"
+- "不对，应该用B"、"改成B，A有问题"
+- 包括Agent自我纠正（有良好结果）
+- ❌ 踩坑/无结论尝试 → Event
 
-### 2. Decision - 决策
-- 明确的决定、选择、确认
-- 示例:"决定先做Fix1和Fix2"、"确认使用Asia/Shanghai时区"
+### 4. Preference - 用户偏好、习惯、忌讳
+- "我喜欢暗色主题"、"不要用红色"
 
-### 3. Preference - 偏好
-- 用户的喜好、倾向、习惯
-- 示例:"用户偏好LLM蒸馏而非正则"、"倾向简洁的代码风格"
+### 5. To-do - 待办、下一步
+- "明天测试"、"记得改配置"
 
-### 4. Improve - 用户纠正/改进
-- 用户的批评、纠正、改进建议
-- 示例:"session_manager应该过滤toolResult"、"prompt应该更精确"
+### 6. Output - 产出物
+- "代码提交了"、"文档完成"
 
-### 5. Action - 后续行动
-- 计划要做的、建议的后续行动
-- 示例:"修改session_distiller.py"、"重置heartbeat-state.json"
+### 7. Emotion - 只记 积极/负面
+- 积极：满意、开心
+- 负面：烦躁、失望
 
-### 6. Oput - 成果
-- 具体产出:文件、链接、创建的东西、完成的结果
-- 示例:"输出了2026-03-30-agent.md"、"提取14项干净结果"
+## 6类事件类型（LLM判断）
 
-### 7. Emotion - 情绪
-- 对话中表达的情感状态
-- 示例:对进度满意(positive)、担心bug(negative)
+- **CoreWork**：本职核心业务（结合agent_types判断）
+  - ["开发型","系统管理型"] → coding + 运维
+  - ["服装商品AI助理"] → 服装/商品管理
+  
+- **CollabResult**：需要其他Agent提供成果（通用化，不限特定Agent）
+  - 判断依据："来自Agent"、"需要Agent提供"、"Agent交付"
+  
+- **AuxTask**：临时辅助、无重要成果
+  - "临时帮忙"、"简单支持"、"顺便"
+  
+- **SelfEvolve**：知识/纠错/习惯养成（Improve标签默认）
+  
+- **EnvAwareness**：用户/系统/环境认知（Preference标签默认）
+  
+- **RuleDecision**：硬性规则、流程、约束
+  - "必须"、"禁止"、"规范"、"标准"
 
-## 输出格式要求
+## 绝不提取
+- 操作型Meta对话：询问如何使用脚本/系统（如"怎么跑"、"这个怎么用"）
 
-请严格按照以下 JSON 格式输出(不要有任何额外文字):
-{"items": [{"type": "Event|Decision|Preference|Improve|Action|Oput|Emotion", "content": "提炼内容(简洁,20-100字)", "emotion": "positive|negative|null", "tags": ["标签1","标签2"], "action": "后续行动或null", "oput": "成果或null", "improve": "纠正内容或null"}]}
+## 去重规则
+- 重复项只提取最终项，标注重复次数（如"决定用Vue" *3次）
 
-## 标签建议(选2-3个)
-- 技术:coding, devops, backend, api, bug, feature
-- 业务:meeting, planning, design, review
-- 状态:completed, in-progress, blocked, urgent
-- 角色:user, assistant
-- 内容:document, code, config, data
-- 场景:memory-automation, session, distillation
+## 参考内容使用指南
+
+**Agent类型（agent_types）**
+- 判断CoreWork：结合类型确定核心业务
+- 影响内容标签：选用该领域专业词汇
+  - 开发型 → #coding #架构
+  - 服装助理 → #款式 #库存
+
+**昨日标签**
+- 避免相近标签不同表述重复提取
+- 例：已有"写代码"，"写脚本"视为同类
+
+**自定义标签**
+- 用户特别要求关注的领域，优先提取
+
+## 输出格式
+```json
+{
+  "items": [{
+    "type": "Event|Decision|...",
+    "event_type": "CoreWork|CollabResult|...",
+    "content": "提炼内容",
+    "emotion": "积极|负面|null",
+    "tags": ["标签1", "标签2"],
+    "source_idx": 1
+  }]
+}
+```
+
+## 重要原则
+- Improve必须有良好结果，踩坑归Event
+- Decision无纠错语义，Improve有纠错语义
+- 纯确认LLM不会误提取，无需单独过滤
+
+__REFERENCE_CONTENT__
 
 ## 会话内容
 
 __SESSION_CONTENT__
 
 ## 注意事项
-1. 只提取真正值得记忆的内容,过滤闲聊、重复、临时信息
-2. 内容要简洁具体,不要泛泛而谈
-3. 每个提取项必须指定type,不允许其他type值
-4. 如果没有值得提取的内容,返回 {"items": []}
-5. **必须**返回合法的JSON格式,不要添加markdown代码块标记
+1. 只提取真正值得记忆的内容，过滤闲聊、重复、临时信息
+2. 内容要简洁具体，不要泛泛而谈
+3. 每个提取项必须指定 type，不允许其他 type 值
+4. 如果没有值得提取的内容，返回 {"items": []}
+5. **必须**返回合法的 JSON 格式，不要添加 markdown 代码块标记
 """
 
-    def __init__(self, min_message_length: int = 10, config_path: Optional[str] = None):
+    def __init__(self, min_message_length: int = 10, config_path: Optional[str] = None,
+                 reference_manager=None):
         """
         初始化蒸馏器
 
         Args:
             min_message_length: 最小消息长度,短于此值的消息被忽略
             config_path: 配置文件路径(用于读取 LLM API 配置)
+            reference_manager: ReferenceManager 实例,用于注入参考内容
         """
         self.min_message_length = min_message_length
         self.config = self._load_config(config_path)
         self.llm_config = self._get_llm_config()
+        self.reference_manager = reference_manager
 
     def _load_config(self, config_path: Optional[str]) -> Dict[str, Any]:
         """加载配置文件"""
@@ -232,11 +276,22 @@ __SESSION_CONTENT__
 
         return content.strip()
 
-    def _format_messages_for_prompt(self, messages: List[Dict[str, Any]]) -> str:
-        """将消息列表格式化为 prompt 可用的文本"""
+    def _format_messages_for_prompt(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        将消息列表格式化为 prompt 可用的文本（带1-based序号）
+
+        Returns:
+            {"text": str, "timestamps": {idx: timestamp}}  # timestamps 的 key 是 1-based 序号
+        """
         formatted_lines = []
+        timestamps = {}  # {1-based-idx: timestamp}
+        msg_idx = 0
 
         for msg in messages:
+            msg_idx += 1
+            timestamp = msg.get("timestamp", "")
+            timestamps[msg_idx] = timestamp  # 记录每个 idx 对应的 timestamp
+            
             role = msg.get("role", "unknown")
             # content 可能是 list(富文本格式)或 string,需要统一处理
             raw_content = msg.get("content", "")
@@ -250,8 +305,6 @@ __SESSION_CONTENT__
             # 清洗工具输出噪声
             content = self._clean_content(content)
             content = content.strip()
-            timestamp = msg.get("timestamp", "")
-
             # 跳过空消息和短消息
             if len(content) < self.min_message_length:
                 continue
@@ -259,19 +312,21 @@ __SESSION_CONTENT__
             # 角色显示名称
             role_display = "用户" if role == "user" else ("助手" if role == "assistant" else role)
 
-            # 格式化时间
+            # 格式化时间（用于显示）
             time_str = ""
             if timestamp:
                 try:
-                    # 尝试解析 ISO 格式时间
                     if isinstance(timestamp, str) and len(timestamp) >= 10:
                         time_str = f"[{timestamp[11:16]}] " if 'T' in timestamp else f"[{timestamp}] "
                 except:
                     pass
 
-            formatted_lines.append(f"{time_str}{role_display}: {content}")
+            formatted_lines.append(f"[{msg_idx}] {time_str}{role_display}: {content}")
 
-        return "\n\n".join(formatted_lines)
+        return {
+            "text": "\n\n".join(formatted_lines),
+            "timestamps": timestamps
+        }
 
     def _call_minimax_api(self, prompt: str) -> Optional[str]:
         """
@@ -494,14 +549,21 @@ __SESSION_CONTENT__
             return []
 
         # 格式化会话内容
-        session_content = self._format_messages_for_prompt(messages)
+        formatted = self._format_messages_for_prompt(messages)
+        session_content = formatted["text"]
+        timestamps_map = formatted["timestamps"]  # {1-based-idx: timestamp}
 
         if not session_content:
             print("[SessionDistiller] 没有足够的内容进行 LLM 蒸馏")
             return []
 
         # 构建 prompt
-        prompt = self.DISTILLATION_PROMPT.replace("__SESSION_CONTENT__", session_content)
+        reference_content = ""
+        if self.reference_manager:
+            reference_content = self.reference_manager.build_reference_content()
+
+        prompt = self.DISTILLATION_PROMPT.replace("__REFERENCE_CONTENT__", reference_content)
+        prompt = prompt.replace("__SESSION_CONTENT__", session_content)
 
         # 调用 LLM API
         print("[SessionDistiller] 正在调用 LLM 进行智能蒸馏...")
@@ -520,7 +582,7 @@ __SESSION_CONTENT__
 
         # 转换为 DistilledItem 对象
         distilled_items = []
-        VALID_TYPES = {"Event", "Decision", "Preference", "Improve", "Action", "Oput", "Emotion"}
+        VALID_TYPES = {"Event", "Decision", "Preference", "Improve", "To-do", "Output", "Emotion", "Action", "Oput"}
         for item_data in items_data:
             try:
                 # 验证必要字段（支持 type 或 item_type）
@@ -528,12 +590,33 @@ __SESSION_CONTENT__
                 if not type_val or "content" not in item_data:
                     continue
 
-                # 确保 item_type 有效（不区分大小写）
-                item_type = type_val.capitalize()
-                if item_type not in VALID_TYPES:
+                # 确保 item_type 有效（不区分大小写，兼容旧类型和带连字符类型）
+                item_type = type_val.strip()
+                type_lower = item_type.lower()
+                if type_lower == "to-do" or type_lower == "todo" or type_lower == "action":
+                    item_type = "To-do"
+                elif type_lower == "output" or type_lower == "oput":
+                    item_type = "Output"
+                elif type_lower in ["event", "decision", "preference", "improve", "emotion"]:
+                    item_type = type_lower.capitalize()
+                elif item_type not in VALID_TYPES:
                     item_type = "Event"  # 默认类型
 
                 # 构建 DistilledItem（新格式7类）
+                source_idx_raw = item_data.get("source_idx", 0)
+                try:
+                    source_idx = int(source_idx_raw) if source_idx_raw else 0
+                except (ValueError, TypeError):
+                    source_idx = 0
+                
+                # 从 timestamps_map 获取 timestamp（source_idx 是 1-based）
+                # 边界检查：source_idx 可能在 LLM 看到的内容范围内，但不在 timestamps_map 中（如超出截断范围）
+                if source_idx in timestamps_map:
+                    item_timestamp = timestamps_map[source_idx]
+                else:
+                    # source_idx 超出范围，使用 session 开始时间
+                    item_timestamp = ""
+
                 item = DistilledItem(
                     item_type=item_type,
                     content=item_data.get("content", ""),
@@ -542,7 +625,9 @@ __SESSION_CONTENT__
                     action=item_data.get("action") if item_data.get("action") != "null" else None,
                     oput=item_data.get("oput") if item_data.get("oput") != "null" else None,
                     improve=item_data.get("improve") if item_data.get("improve") != "null" else None,
-                    source_message=""
+                    source_idx=source_idx,
+                    source_message="",
+                    timestamp=item_timestamp
                 )
 
                 # 去重检查
@@ -669,10 +754,10 @@ __SESSION_CONTENT__
         """检测情绪关键词"""
         for word in self.EMOTION_POSITIVE:
             if word in content:
-                return "positive"
+                return "积极"
         for word in self.EMOTION_NEGATIVE:
             if word in content:
-                return "negative"
+                return "负面"
         return None
 
     def _generate_tags(self, item_type: str, content: str, role: str) -> List[str]:

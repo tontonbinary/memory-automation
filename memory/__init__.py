@@ -2,7 +2,7 @@
 Memory Automation Skill - 会话记忆自动化模块
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __author__ = "OpenClaw"
 
 from .state_manager import StateManager
