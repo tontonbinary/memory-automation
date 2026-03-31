@@ -100,7 +100,7 @@ class SessionManager:
 
                 if not id_exists:
                     # session 文件可能已变，退化为全量处理
-                    print(f"[SessionManager] last_processed_msg_id={last_processed_msg_id} 不在当前 session 文件，全量处理")
+                    print(f"[SessionManager] ⚠️ last_processed_msg_id={last_processed_msg_id} 不在当前 session 文件，全量处理 ({len(all_messages)} 条)")
                     return session_key, all_messages, last_msg_id
 
                 # 正常过滤：跳过 last_processed_msg_id 之后的消息
@@ -114,7 +114,7 @@ class SessionManager:
                     elif msg.get("msg_id") == last_processed_msg_id:
                         found_last = True
 
-                print(f"[SessionManager] 过滤后消息数: {len(new_messages)}/{len(all_messages)}")
+                print(f"[SessionManager] ✅ 过滤: last={last_processed_msg_id}, 过滤后={len(new_messages)}/{len(all_messages)} 条")
                 return session_key, new_messages, last_msg_id
             else:
                 # 首次处理，返回所有消息
@@ -129,6 +129,45 @@ class SessionManager:
         except Exception as e:
             print(f"[SessionManager] ❌ 获取会话异常: {e}")
             return "", [], None
+
+    def get_session_chunks(self, max_messages_per_chunk: int = 200) -> List[Tuple[List[Dict[str, Any]], Optional[str]]]:
+        """
+        获取 session 消息分块
+
+        用于处理大量历史消息时，避免单次 Prompt 过长。
+
+        流程：
+        1. 读取当前 session 所有消息（过滤 toolResult）
+        2. 按 max_messages_per_chunk 切分成多个块
+        3. 返回 [(messages_chunk, last_msg_id_of_chunk), ...]
+
+        调用方应该逐块处理，每块处理完后更新 state_manager 的 last_processed_msg_id。
+
+        Args:
+            max_messages_per_chunk: 每块最大消息数，默认 200
+
+        Returns:
+            [(messages, last_msg_id), ...] 列表
+            - messages: 该块的的消息列表
+            - last_msg_id: 该块最后一条消息的 msg_id
+        """
+        # 获取当前 session
+        session_key, all_messages, _ = self.get_current_session()
+        if not session_key or not all_messages:
+            return []
+
+        # 计算需要分几块
+        chunks = []
+        total = len(all_messages)
+
+        for i in range(0, total, max_messages_per_chunk):
+            chunk_messages = all_messages[i:i + max_messages_per_chunk]
+            chunk_last_msg_id = chunk_messages[-1].get('msg_id') if chunk_messages else None
+            chunks.append((chunk_messages, chunk_last_msg_id))
+            print(f"[SessionManager] Chunk {len(chunks)}: 消息 {i+1}-{min(i+max_messages_per_chunk, total)}, last_msg_id={chunk_last_msg_id}")
+
+        print(f"[SessionManager] 共 {len(chunks)} 块, 总消息 {total}")
+        return chunks
 
     def _get_sessions_dir(self) -> Path:
         """

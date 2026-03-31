@@ -1,6 +1,8 @@
-# Memory Automation Skill
+# Mauto - Memory Automation Skill
 
 OpenClaw 记忆自动化 Skill，实现会话内容的智能蒸馏与持久化存储。
+
+> **仓库**: [GitHub](https://github.com/tontonbinary/memory-automation) | [Gitee](https://gitee.com/tontonbinary/mauto) (开源镜像)
 
 ## 功能特性
 
@@ -137,7 +139,7 @@ print(result)
   "last_session_key": "agent:code:session:xxx",
   "last_processed_time": "2026-03-26T14:32:00",
   "last_distilled_messages": 5,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "updated_at": "2026-03-26T14:32:00"
 }
 ```
@@ -168,4 +170,8 @@ python memory/automation.py heartbeat
 ## License
 
 MIT License
-test
+
+## 仓库地址
+
+- GitHub: https://github.com/tontonbinary/memory-automation
+- Gitee: https://gitee.com/tontonbinary/mauto (开源镜像)

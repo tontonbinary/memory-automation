@@ -22,6 +22,7 @@ config:
 entry_points:
   manual: "memory/automation.py"
   heartbeat: "memory/automation.py"
+  old-session: "memory/automation.py"
 ---
 
 # Memory Automation Skill
@@ -152,3 +153,70 @@ memory-automation 的 API key 已失效或配置有误。
 - Agent 检查 config.json 当前配置
 - 告知用户当前状态
 - 根据用户需求更新
+
+## L1 记忆存储格式
+
+### L1 索引（双索引：时间 + 记忆标签）
+
+```
+| 时间 | 记忆标签 | 事件类型 | 内容标签 |
+|------|----------|----------|----------|
+| 14:30 | Decision | CoreWork | #feature #coding |
+```
+
+**字段说明：**
+- **时间**：HH:MM（UTC 原始时间）
+- **记忆标签**：7类记忆类型（Event/Decision/Preference/Improve/To-do/Output/Emotion）
+- **事件类型**：5类事件类型（CoreWork/CollabResult/AuxTask/SelfEvolve/EnvAwareness）
+- **内容标签**：#tag1 #tag2（具体内容标签）
+
+### L1 完整日志
+
+```markdown
+## HH:MM
+### Event
+- **内容**：记忆内容摘要
+- **标签**：`#{标签1} #{标签2}`
+- **来源**：session/03-26#L行号
+```
+
+### 记忆检索流程（Agent 调用时）
+
+当 Agent 需要调用记忆时：
+
+1. **匹配 L1/L2 标签索引**
+   - 在上下文中识别关键词（如 #feature、#bug、#decision）
+   - 通过「时间 + 记忆标签」双索引定位相关 L1 条目
+
+2. **获取 L1 条目内容**
+   - 根据 L1 条目中的「来源」字段定位 session 内容
+   - 或直接读取 L1 完整日志中的内容
+
+3. **L1 → L2 升级依据**
+   - 核心依据：**事件类型 + 内容标签**
+   - 当 L1 条目同时满足：
+     - 事件类型（如 CoreWork/SelfEvolve）
+     - 内容标签达到升级阈值
+   - 则升级到 L2
+
+### 7类记忆类型
+
+| 类型 | 说明 | 示例 |
+|------|------|------|
+| Event | 客观事实、问题、需求 | "创建了文件"、"遇到了bug" |
+| Decision | 结论、规则、方案 | "决定采用"、"确认用" |
+| Preference | 用户偏好、习惯 | "我喜欢"、"不要用" |
+| Improve | 用户纠正、改进 | "改成"、"不对" |
+| To-do | 待办、下一步 | "去做"、"开始" |
+| Output | 产出物 | "完成了"、"生成了" |
+| Emotion | 情绪（只记积极/负面） | "烦躁"/"满意" |
+
+### 5类事件类型
+
+| 类型 | 说明 |
+|------|------|
+| CoreWork | 本职核心业务与关键任务 |
+| CollabResult | 接收其他 Agent 交付的成果 |
+| AuxTask | 临时辅助、无重要成果的事务 |
+| SelfEvolve | 知识、纠错、规则、红线 |
+| EnvAwareness | 用户、系统、分工、规律 |

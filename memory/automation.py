@@ -23,6 +23,7 @@ from .message_processor import MessageProcessor
 from .pattern_detector import PatternDetector
 from .session_distiller import SessionDistiller
 from .l1_writer import L1Writer
+from .reference_manager import ReferenceManager
 
 
 class MemoryAutomation:
@@ -43,6 +44,9 @@ class MemoryAutomation:
         # 初始化组件
         self.state_manager = StateManager(self.config.get("state_file", "memory/heartbeat-state.json"))
 
+        # 初始化参考内容管理器（从 heartbeat-state.json 读取配置）
+        self.reference_manager = ReferenceManager(agent_id=self.agent_id or "code")
+
         # 初始化新模块
         self.session_manager = SessionManager(
             agent_id=self.agent_id,
@@ -52,15 +56,24 @@ class MemoryAutomation:
             agent_id=self.agent_id,
             config=self.config
         )
+
+        # 从 heartbeat-state 读取 api_key 注入 distiller
+        state = self.reference_manager._load_state()
+        api_key = state.get("api_key", "")
         self.distiller = SessionDistiller(
-            min_message_length=self.config.get("distillation", {}).get("min_message_length", 10)
+            min_message_length=self.config.get("distillation", {}).get("min_message_length", 10),
+            reference_manager=self.reference_manager
         )
+        if api_key:
+            self.distiller.llm_config["api_key"] = api_key
+
         self.message_processor = MessageProcessor(
             agent_id=self.agent_id,
             config=self.config,
             session_manager=self.session_manager,
             l1_writer=self.l1_writer,
-            distiller=self.distiller
+            distiller=self.distiller,
+            reference_manager=self.reference_manager
         )
         self.pattern_detector = PatternDetector(
             agent_id=self.agent_id,
@@ -198,6 +211,66 @@ class MemoryAutomation:
         """确保 L1 存储目录存在"""
         l1_path = self._get_l1_path()
         l1_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _ensure_heartbeat_file(self) -> bool:
+        """
+        确保 heartbeat 文件存在于 agent workspace
+
+        首次运行时自动创建，后续跳过。
+
+        Returns:
+            True if heartbeat file exists or was created, False on error
+        """
+        if not self.agent_id:
+            return False
+
+        heartbeat_path = Path.home() / ".openclaw" / "workspaces" / self.agent_id / "workspace" / "HEARTBEAT.md"
+
+        # 如果已存在，跳过
+        if heartbeat_path.exists():
+            return True
+
+        # 创建 heartbeat 文件
+        heartbeat_content = f"""# HEARTBEAT.md
+
+# Keep this file empty (or with only comments) to skip heartbeat API calls.
+
+# Memory Automation - 自动将会话蒸馏到 L1 记忆层
+cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbeat --agent {self.agent_id}
+"""
+        try:
+            heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+            heartbeat_path.write_text(heartbeat_content, encoding='utf-8')
+            print(f"[MemoryAutomation] ✅ Heartbeat 文件已创建: {heartbeat_path}")
+            return True
+        except Exception as e:
+            print(f"[MemoryAutomation] ⚠️ 无法创建 heartbeat 文件: {e}")
+            return False
+
+    def _check_config_status(self) -> Dict[str, Any]:
+        """
+        检查配置状态，返回是否就绪或 awaiting_confirmation
+
+        Returns:
+            {"ready": bool, "fallback": bool, "status": str, ...}
+        """
+        is_complete, missing = self.reference_manager.is_complete()
+        if is_complete:
+            return {"ready": True, "fallback": False}
+
+        # 检查是否已接受降级
+        state = self.reference_manager._load_state()
+        if state.get("fallback_accepted"):
+            return {"ready": True, "fallback": True}
+
+        missing_str = ", ".join(missing)
+        return {
+            "ready": False,
+            "fallback": False,
+            "status": "awaiting_confirmation",
+            "config_status": self.reference_manager.get_config_status(),
+            "message": f"配置不完整（缺失: {missing_str}），蒸馏质量将下降，是否继续？"
+        }
 
     def write_activation_flag(self, message: str = "Mauto 需要激活，请运行 'mauto activate' 或让用户触发一次 Mauto") -> Path:
         """
@@ -475,6 +548,19 @@ class MemoryAutomation:
             "pattern_detected": None  # 实时模式检测结果
         }
 
+        # 配置检查（新模式：等待确认）
+        config_status = self._check_config_status()
+        if not config_status["ready"]:
+            result["status"] = "awaiting_confirmation"
+            result["config_status"] = config_status["config_status"]
+            result["reason"] = config_status["message"]
+            return result
+
+        # 如果接受降级，关闭 LLM 蒸馏
+        if config_status.get("fallback"):
+            print("[MemoryAutomation] 配置不完整，使用 regex 降级蒸馏")
+            self.distiller.llm_config["enabled"] = False
+
         # 如果指定了 session_file，直接处理该文件
         if session_file:
             print(f"[MemoryAutomation] 处理指定 session 文件: {session_file}")
@@ -542,59 +628,28 @@ class MemoryAutomation:
             self.state_manager.update_after_process(session_key, 0, last_msg_id)
             return result
 
-        # ===== API Key 检查 =====
-        llm_config = self.config.get("llm", {})
-        api_key = llm_config.get("api_key")
-        api_key_asked = llm_config.get("api_key_asked", False)
+        # 切块处理：避免单次 Prompt 过长
+        # 每块处理完后更新状态，确保进度不丢失
+        total_lines = 0
+        total_items = 0
+        chunks = self.session_manager.get_session_chunks(max_messages_per_chunk=200)
 
-        if not api_key and not api_key_asked:
-            # 首次询问用户关于 API key
-            print("\n[MEMORY-AUTOMATION] API_KEY: not_configured")
-            print("memory-automation 需要配置以下信息：")
-            print("1. API key（从哪里获取？）")
-            print("2. 供应商（默认 minimax）")
-            print("3. 模型（默认 MiniMax-M2.7）")
-            print("如暂不提供，将使用 regex 蒸馏（效果较差）。")
-            # 更新状态
-            self.config["llm"]["api_key_asked"] = True
-            self._save_config()
+        for chunk_idx, (chunk_messages, chunk_last_msg_id) in enumerate(chunks):
+            print(f"[Heartbeat] 处理块 {chunk_idx+1}/{len(chunks)}, {len(chunk_messages)} 条消息")
+            lines_written, items, final_msg_id = self.process_session(chunk_messages, force=True)
+            total_lines += lines_written
+            total_items += len(items)
 
-        # 处理会话
-        lines_written, items, final_msg_id = self.process_session(messages, force=True)
-
-        # ===== Regex 计数检查 =====
-        regex_config = self.config.get("regex", {})
-        regex_count = regex_config.get("count", 0)
-        regex_count_asked = regex_config.get("count_asked", False)
-
-        # 更新 regex 计数（每次 regex 蒸馏都计数）
-        self.config["regex"]["count"] = regex_count + 1
-        regex_count = regex_count + 1
-
-        # 检查是否达到询问阈值
-        if regex_count >= 30 and not regex_count_asked:
-            print("\n[MEMORY-AUTOMATION] REGEX_LIMIT_REACHED")
-            print("你已经使用 regex 蒸馏 30 次了，效果如何？")
-            print("是否要：")
-            print("1）提供 API key 升级到 LLM 蒸馏")
-            print("2）提供更好的蒸馏关键词/标签")
-            self.config["regex"]["count_asked"] = True
-
-        if regex_count >= 30 or regex_count_asked:
-            self.config["regex"]["count"] = 0  # 重置计数
-
-        self._save_config()
-
-        # 使用最后处理的消息ID更新状态
-        update_msg_id = final_msg_id or last_msg_id
-        self.state_manager.update_after_process(session_key, len(items), update_msg_id)
+            # 每块处理完后立即更新状态
+            self.state_manager.update_after_process(session_key, len(items), chunk_last_msg_id)
 
         result.update({
             "triggered": True,
             "reason": "手动触发成功",
-            "items_distilled": len(items),
-            "lines_written": lines_written,
-            "session_key": session_key
+            "items_distilled": total_items,
+            "lines_written": total_lines,
+            "session_key": session_key,
+            "chunks_processed": len(chunks)
         })
 
         return result
@@ -639,6 +694,22 @@ class MemoryAutomation:
             "old_session_processed": False,
             "old_session_items": 0
         }
+
+        # 首次运行检查：确保 heartbeat 文件存在
+        self._ensure_heartbeat_file()
+
+        # 配置检查（新模式：等待确认）
+        config_status = self._check_config_status()
+        if not config_status["ready"]:
+            result["status"] = "awaiting_confirmation"
+            result["config_status"] = config_status["config_status"]
+            result["reason"] = config_status["message"]
+            return result
+
+        # 如果接受降级，关闭 LLM 蒸馏
+        if config_status.get("fallback"):
+            print("[MemoryAutomation] 配置不完整，使用 regex 降级蒸馏")
+            self.distiller.llm_config["enabled"] = False
 
         # 获取当前会话（只获取新消息）
         session_key, messages, last_msg_id = self.get_current_session()
@@ -722,13 +793,15 @@ class MemoryAutomation:
 def main():
     """主入口函数"""
     if len(sys.argv) < 2:
-        print("用法: python -m memory.automation [manual|heartbeat] [--agent <agent_id>] [--session <session_file>]")
+        print("用法: python -m memory.automation [manual|heartbeat|old-session] [--agent <agent_id>] [--session <session_file>]")
         print("  manual    - 手动触发记忆蒸馏")
         print("  heartbeat - Heartbeat 触发记忆蒸馏")
+        print("  old-session <key> - 处理已 reset 的旧 session")
         print("  --agent <id> - 指定 agent ID（必需）")
         print("  --session <file> - 指定要处理的 session 文件（绝对路径）")
         print("  示例: python -m memory.automation manual --agent code")
         print("  示例: python -m memory.automation heartbeat --agent xiaoxian")
+        print("  示例: python -m memory.automation old-session 'agent:xiaoxian:feishu:direct:ou_xxx' --agent code")
         sys.exit(1)
 
     mode = sys.argv[1].lower()
@@ -759,6 +832,18 @@ def main():
             print(f"  - 写入行: {result['lines_written']}")
             if result.get('session_key'):
                 print(f"  - Session: {result['session_key']}")
+
+    elif mode == "old-session":
+        # 处理已 reset 的旧 session
+        if len(sys.argv) < 3:
+            print("用法: python -m memory.automation old-session <session_key> [--agent <agent_id>]")
+            print("  session_key - 要处理的旧 session key")
+            print("  示例: python -m memory.automation old-session 'agent:xiaoxian:feishu:direct:ou_xxx'")
+            sys.exit(1)
+        old_session_key = sys.argv[2]
+        print(f"[MemoryAutomation] 处理旧 session: {old_session_key}")
+        result = automation.process_old_session(old_session_key)
+        print(f"\n[结果] 蒸馏项: {result[0]}, items: {len(result[1]) if result[1] else 0}")
 
     elif mode == "heartbeat":
         # Heartbeat 模式 - 只读取新消息，写入队列，不蒸馏
