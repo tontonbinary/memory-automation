@@ -193,9 +193,10 @@ class L1Writer:
         for pi in parsed_items:
             item = pi['item']
             time_display = pi['time_display']
+            item_type = item.get('item_type', '')
             tags_str = " ".join([f"#{tag}" for tag in item.get("tags", [])]) if item.get("tags") else "-"
             event_type = item.get('event_type', item['item_type'])
-            new_index_lines.append(f"| {time_display} | {tags_str} | {event_type} | ## {time_display} |")
+            new_index_lines.append(f"| {time_display} | {item_type} | {tags_str} | {event_type} | ## {time_display} |")
             item['session_date'] = date_str
 
         # 构建完整日志条目（带时区变更标注）
@@ -223,8 +224,8 @@ class L1Writer:
                 lines_written += 3
 
                 f.write("# L1 标签索引\n\n")
-                f.write("| 时间 | 标签 | 类型 | 位置 |\n")
-                f.write("|------|------|------|------|\n")
+                f.write("| 时间 | 7类 | 标签 | 事件类型 | 位置 |\n")
+                f.write("|------|-----|------|----------|------|\n")
                 for line in new_index_lines:
                     f.write(line + "\n")
                     lines_written += 1
@@ -294,8 +295,8 @@ class L1Writer:
                     f.write(f"# 时区: {current_tz}\n\n")
                     lines_written += 3
                     f.write("# L1 标签索引\n\n")
-                    f.write("| 时间 | 标签 | 类型 | 位置 |\n")
-                    f.write("|------|------|------|------|\n")
+                    f.write("| 时间 | 7类 | 标签 | 事件类型 | 位置 |\n")
+                    f.write("|------|-----|------|----------|------|\n")
                     for line in new_index_lines:
                         f.write(line + "\n")
                         lines_written += 1
