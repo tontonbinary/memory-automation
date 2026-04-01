@@ -123,10 +123,10 @@ class L1Writer:
             tag_str = " ".join([f"#{tag}" for tag in item["tags"]])
             lines.append(f"- **标签**：`{tag_str}`")
 
-        # 来源：dist_session/MM-DD#L{idx}（清洗后的session索引）
+        # 来源：clean_session/MM-DD#L{idx}（清洗后的session索引）
         session_date = item.get("session_date", "")
         source_idx = item.get('source_idx', line_number)
-        lines.append(f"- **来源**：dist_session/{session_date[5:] if session_date else '??-??'}#L{source_idx}")
+        lines.append(f"- **来源**：clean_session/{session_date[5:] if session_date else '??-??'}#L{source_idx}")
 
         lines.append("")
         return "\n".join(lines)

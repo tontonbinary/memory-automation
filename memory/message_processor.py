@@ -44,7 +44,7 @@ class MessageProcessor:
         if not messages:
             return 0, [], None
 
-        # 保存清洗后的 session 到 dist_session/
+        # 保存清洗后的 session 到 clean_session/
         self._save_cleaned_session(messages)
 
         # LLM 蒸馏（支持 fallback 到正则）
@@ -209,7 +209,7 @@ class MessageProcessor:
         return distilled_items
     def _save_cleaned_session(self, messages: List[Dict[str, Any]]) -> str:
         """
-        保存清洗后的 session 到 dist_session/ 目录
+        保存清洗后的 session 到 clean_session/ 目录
         
         Args:
             messages: 清洗后的消息列表
@@ -228,12 +228,12 @@ class MessageProcessor:
         date_str = first_ts[:10] if first_ts else 'unknown'
         date_part = date_str[5:]  # MM-DD
         
-        # dist_session 目录
+        # clean_session 目录
         agent_id = self.config.get('agent_id', 'unknown')
-        dist_dir = Path(f'~/.openclaw/agents/{agent_id}/dist_session').expanduser()
+        dist_dir = Path(f'~/.openclaw/agents/{agent_id}/clean_session').expanduser()
         dist_dir.mkdir(parents=True, exist_ok=True)
         
-        # 文件名：dist_session/MM-DD_{uuid_prefix}.json
+        # 文件名：clean_session/MM-DD_{uuid_prefix}.json
         # 使用第一条消息的 id 前缀确保唯一性
         first_id = messages[0].get('id', 'unknown')[:8] if messages else 'unknown'
         dist_file = dist_dir / f'{date_part}_{first_id}.json'
@@ -244,7 +244,7 @@ class MessageProcessor:
         
         print(f"[MessageProcessor] 清洗后 session 已保存: {dist_file}")
         
-        # 返回用于 L1 来源引用的标识：dist_session/MM-DD#L{idx}
+        # 返回用于 L1 来源引用的标识：clean_session/MM-DD#L{idx}
         # 注意：实际索引由蒸馏时的 source_idx 决定
-        return f'dist_session/{date_part}'
+        return f'clean_session/{date_part}'
 
