@@ -411,7 +411,8 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                             msg_data = entry.get("message", {})
                             content = msg_data.get("content", "")
                             role = msg_data.get("role", "")
-                            if role in ["user", "assistant"] and content:
+                            # 包含 user/assistant/toolResult（toolResult 用于 parentId 链追溯）
+                            if role in ["user", "assistant", "toolResult"]:
                                 # 处理富文本格式
                                 if isinstance(content, list):
                                     text = " ".join(
@@ -419,12 +420,13 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                                         if isinstance(item, dict) and item.get("type") == "text"
                                     )
                                 else:
-                                    text = str(content)
-                                if text.strip():
+                                    text = str(content) if content else ""
+                                if text.strip() or role == "toolResult":
                                     messages.append({
                                         "role": role,
-                                        "content": text.strip(),
-                                        "msg_id": entry.get("id", ""),
+                                        "content": text.strip() if text.strip() else "[toolResult]",
+                                        "id": entry.get("id", ""),
+                                        "parentId": entry.get("parentId", ""),
                                         "timestamp": entry.get("timestamp")
                                     })
                     except json_module.JSONDecodeError:
@@ -773,7 +775,7 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         # 写入 pending_queue，让 Agent 自己蒸馏
         queue_path = self._write_pending_queue(messages)
 
-        update_msg_id = last_msg_id or (messages[-1].get("msg_id") if messages else None)
+        update_msg_id = last_msg_id or (messages[-1].get("id") if messages else None)
         self.state_manager.update_after_process(session_key, 0, update_msg_id)
 
         result.update({

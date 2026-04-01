@@ -79,13 +79,14 @@ class SessionManager:
                             if role == "toolResult":
                                 continue
 
-                            # 生成消息ID（如果没有）
-                            msg_id = entry.get("id") or entry.get("msg_id") or f"msg_{len(all_messages)}"
+                            # 提取消息ID（现在 id 和 parentId 在顶层）
+                            msg_id = entry.get("id", "") or f"msg_{len(all_messages)}"
                             msg = {
                                 "role": role,
                                 "content": msg_data.get("content", ""),
-                                "timestamp": entry.get("timestamp", ""),
-                                "msg_id": msg_id
+                                "id": msg_id,
+                                "parentId": entry.get("parentId", ""),
+                                "timestamp": entry.get("timestamp", "")
                             }
                             all_messages.append(msg)
                             last_msg_id = msg_id
@@ -96,7 +97,7 @@ class SessionManager:
             if last_processed_msg_id:
                 # Fix 2: 验证 last_processed_msg_id 是否真的在当前消息列表里
                 # 如果 session 文件变了（reset/切换），旧 id 找不到会退化为全量处理
-                id_exists = any(msg.get("msg_id") == last_processed_msg_id for msg in all_messages)
+                id_exists = any(msg.get("id") == last_processed_msg_id for msg in all_messages)
 
                 if not id_exists:
                     # session 文件可能已变，退化为全量处理
@@ -111,7 +112,7 @@ class SessionManager:
                     last_msg = msg
                     if found_last:
                         new_messages.append(msg)
-                    elif msg.get("msg_id") == last_processed_msg_id:
+                    elif msg.get("id") == last_processed_msg_id:
                         found_last = True
 
                 print(f"[SessionManager] ✅ 过滤: last={last_processed_msg_id}, 过滤后={len(new_messages)}/{len(all_messages)} 条")
@@ -162,7 +163,7 @@ class SessionManager:
 
         for i in range(0, total, max_messages_per_chunk):
             chunk_messages = all_messages[i:i + max_messages_per_chunk]
-            chunk_last_msg_id = chunk_messages[-1].get('msg_id') if chunk_messages else None
+            chunk_last_msg_id = chunk_messages[-1].get('id') if chunk_messages else None
             chunks.append((chunk_messages, chunk_last_msg_id))
             print(f"[SessionManager] Chunk {len(chunks)}: 消息 {i+1}-{min(i+max_messages_per_chunk, total)}, last_msg_id={chunk_last_msg_id}")
 
@@ -247,13 +248,15 @@ class SessionManager:
                     try:
                         entry = json.loads(line)
                         if entry.get("type") == "message":
-                            msg_id = entry.get("id") or entry.get("msg_id") or f"msg_{len(messages)}"
+                            msg_id = entry.get("id", "") or f"msg_{len(messages)}"
+                            parent_id = entry.get("parentId", "")
                             msg_data = entry.get("message", {})
                             msg = {
                                 "role": msg_data.get("role", ""),
                                 "content": msg_data.get("content", ""),
-                                "timestamp": entry.get("timestamp", ""),
-                                "msg_id": msg_id
+                                "id": msg_id,
+                                "parentId": parent_id,
+                                "timestamp": entry.get("timestamp", "")
                             }
 
                             # 过滤：如果指定了 after_msg_id，跳过之前的消息

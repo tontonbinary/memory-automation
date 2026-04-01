@@ -61,7 +61,7 @@ class MessageProcessor:
         if not distilled_items:
             print("[MessageProcessor] 未提取到有效信息")
             # 返回最后一条消息的ID用于更新状态
-            last_msg_id = messages[-1].get("msg_id") if messages else None
+            last_msg_id = messages[-1].get("id") if messages else None
             return 0, [], last_msg_id
 
         # 获取第一条消息的时间戳作为 session 开始时间（用于推断时区）
@@ -84,7 +84,7 @@ class MessageProcessor:
         print(f"[MessageProcessor] 已写入 {lines_written} 行，提取 {len(distilled_items)} 项")
 
         # 获取最后一条消息的ID
-        last_msg_id = messages[-1].get("msg_id") if messages else None
+        last_msg_id = messages[-1].get("id") if messages else None
 
         return lines_written, distilled_items, last_msg_id
 

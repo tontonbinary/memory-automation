@@ -164,7 +164,7 @@ Session Distiller - 将对话历史提炼为结构化记忆
 
 __REFERENCE_CONTENT__
 
-## 会话内容
+## 会话内容（JSON 格式）
 
 __SESSION_CONTENT__
 
@@ -285,8 +285,7 @@ __SESSION_CONTENT__
         # 去掉 [message_id: xxx] 行
         content = re.sub(r'\[message_id:[^\]]+\]\s*\n?', '', content)
         
-        # 去掉 sender ID 前缀（ou_xxx: 开头的行）
-        content = re.sub(r'^ou_[a-z0-9]+:\s*', '', content, flags=re.MULTILINE)
+        # 保留 sender ID 前缀（ou_xxx: 开头的行），为群聊 session 做准备
         
         # 去掉空 ```json 块
         content = re.sub(r'```json\s*\{[\s\S]*?\}\s*```', '', content)
@@ -368,19 +367,32 @@ __SESSION_CONTENT__
                 # kimi 方式：每块单独清洗后再连接（不用空格拆散metadata块）
                 cleaned_parts = []
                 for item in raw_content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        text = item.get("text", "")
-                        if text:
-                            cleaned = self._clean_content(text)
-                            cleaned = cleaned.strip()
-                            if cleaned:
-                                cleaned_parts.append(cleaned)
+                    if isinstance(item, dict):
+                        item_type = item.get("type")
+                        
+                        # 显式过滤：thinking/toolCall/toolResult 等内部处理内容全部丢弃
+                        if item_type in ("thinking", "toolCall", "toolResult"):
+                            continue
+                        
+                        if item_type == "text":
+                            text = item.get("text", "")
+                            if text:
+                                cleaned = self._clean_content(text)
+                                cleaned = cleaned.strip()
+                                if cleaned:
+                                    cleaned_parts.append(cleaned)
+                        elif item_type == "image":
+                            cleaned_parts.append("[图片]")
+                        elif item_type == "audio":
+                            cleaned_parts.append("[语音]")
+                        # 其他类型默认丢弃
                 content = "\n".join(cleaned_parts)
             else:
                 content = str(raw_content)
                 content = self._clean_content(content)
             content = content.strip()
-            sender = None  # 简化处理，不提取 sender
+            # 提取 sender ID（保留，为群聊 session 做准备）
+            sender = msg.get("sender") or msg.get("sender_id")
             
             # 跳过空消息和短消息
             if len(content) < self.min_message_length:
@@ -397,19 +409,60 @@ __SESSION_CONTENT__
             # 群聊时显示发送者
             sender_info = f"[{sender}] " if sender else ""
 
-            # 格式化时间（用于显示）
+            # 格式化时间（用于显示）- 转换为系统本地时区
             time_str = ""
             if timestamp:
                 try:
-                    if isinstance(timestamp, str) and len(timestamp) >= 10:
-                        time_str = f"[{timestamp[11:16]}] " if 'T' in timestamp else f"[{timestamp}] "
+                    if isinstance(timestamp, str):
+                        if len(timestamp) >= 10:
+                            time_str = f"[{timestamp[11:16]}] " if 'T' in timestamp else f"[{timestamp}] "
+                    elif isinstance(timestamp, (int, float)):
+                        # Unix 时间戳（毫秒）→ 转为系统本地时区
+                        import datetime
+                        dt = datetime.datetime.fromtimestamp(timestamp / 1000)
+                        time_str = f"[{dt.strftime('%Y-%m-%dT%H:%M:%S')}] "
                 except:
                     pass
 
             formatted_lines.append(f"[{msg_idx}] {time_str}{role_display}: {sender_info}{content}")
 
+        # 直接构建精简 JSON 格式
+        messages_list = []
+        for msg_item in filtered_messages:
+            ts = msg_item.get("timestamp", "")
+            role = msg_item.get("role", "unknown")
+            sender = msg_item.get("sender") or msg_item.get("sender_id") or ""
+            
+            raw_content = msg_item.get("content", "")
+            if isinstance(raw_content, list):
+                parts = []
+                for c in raw_content:
+                    if isinstance(c, dict):
+                        t = c.get("type")
+                        if t == "text":
+                            text = c.get("text", "")
+                            if text:
+                                cleaned = self._clean_content(text)
+                                parts.append(cleaned.strip())
+                        elif t == "image":
+                            parts.append("[图片]")
+                        elif t == "audio":
+                            parts.append("[语音]")
+                content = "\n".join(parts)
+            else:
+                content = self._clean_content(str(raw_content))
+            
+            if len(content) >= self.min_message_length:
+                messages_list.append({
+                    "r": role[:1],  # u=user, a=assistant
+                    "s": sender,
+                    "t": str(ts),
+                    "c": content[:300]  # 截断
+                })
+        
         return {
-            "text": "\n\n".join(formatted_lines),
+            "text": "\n\n".join(formatted_lines),  # 兼容旧代码
+            "json": messages_list,  # 精简 JSON 格式
             "timestamps": timestamps
         }
 
@@ -635,10 +688,13 @@ __SESSION_CONTENT__
 
         # 格式化会话内容
         formatted = self._format_messages_for_prompt(messages)
-        session_content = formatted["text"]
         timestamps_map = formatted["timestamps"]  # {1-based-idx: timestamp}
 
-        if not session_content:
+        # 使用 JSON 格式（减少 token 开销）
+        session_json = json.dumps(formatted["json"], ensure_ascii=False)
+        session_content = session_json
+
+        if not session_content or session_content == "null":
             print("[SessionDistiller] 没有足够的内容进行 LLM 蒸馏")
             return []
 

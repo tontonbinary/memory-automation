@@ -72,7 +72,7 @@ class DistillerAgent:
             content = content.strip()
             role = msg.get("role", "unknown")
             timestamp = msg.get("timestamp", "")
-            msg_id = msg.get("msg_id", "")
+            msg_id = msg.get("id", "")
 
             # 跳过短消息
             if len(content) < self.config.get("min_message_length", 10):
@@ -130,7 +130,7 @@ class DistillerAgent:
                             "source_message": content[:300],
                             "outcome": None,
                             "timestamp": timestamp,
-                            "msg_id": msg_id
+                            "id": msg_id
                         }
 
                         # 去重检查

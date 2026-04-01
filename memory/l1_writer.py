@@ -29,37 +29,42 @@ class L1Writer:
 
     def _parse_timestamp(self, raw_ts: str) -> Tuple[str, str]:
         """
-        从原始 timestamp 解析时区标签和 HH:MM 显示时间
+        从原始 timestamp 解析时区标签和 HH:MM 显示时间（已转换为 Asia/Shanghai）
 
         Args:
             raw_ts: 原始时间字符串，如 "2026-03-30T20:04:22.758Z" 或 "+02:00"
 
         Returns:
             (timezone_label, time_display)
-            timezone_label: "UTC" | "Asia/Shanghai (UTC+8)" | "Europe/Barcelona (UTC+2)" | "Unknown"
-            time_display: "HH:MM" 格式
+            timezone_label: "Asia/Shanghai (UTC+8)" | etc.
+            time_display: "HH:MM" 格式（已转换为本地时区）
         """
         if not raw_ts:
             return "Unknown", "??:??"
         try:
             if raw_ts.endswith('Z'):
-                # UTC
-                ts = raw_ts[:-1]  # 去掉 Z
-                return "UTC", ts[11:16]
+                # UTC -> 转换为 Asia/Shanghai (+8)
+                ts_str = raw_ts[:-1]  # 去掉 Z
+                dt = datetime.fromisoformat(ts_str)
+                dt_local = dt + timedelta(hours=8)
+                return "Asia/Shanghai (UTC+8)", dt_local.strftime("%H:%M")
             elif '+' in raw_ts:
                 # 带偏移量，如 +08:00、+02:00
                 offset_start = raw_ts.rfind('+')
-                offset = raw_ts[offset_start:]
+                offset_str = raw_ts[offset_start+1:offset_start+6]  # 如 "08:00"
+                offset_hours = int(offset_str.split(':')[0])
                 time_part = raw_ts[:offset_start]
-                if offset == '+08:00':
+                dt = datetime.fromisoformat(time_part)
+                dt_local = dt + timedelta(hours=8 - offset_hours)
+                if offset_hours == 8:
                     tz_label = "Asia/Shanghai (UTC+8)"
-                elif offset == '+02:00':
+                elif offset_hours == 2:
                     tz_label = "Europe/Barcelona (UTC+2)"
-                elif offset == '+00:00':
+                elif offset_hours == 0:
                     tz_label = "UTC"
                 else:
-                    tz_label = offset  # 兜底直接用偏移量
-                return tz_label, time_part[11:16]
+                    tz_label = f"UTC+{offset_hours}"
+                return tz_label, dt_local.strftime("%H:%M")
             else:
                 ts = raw_ts
                 return "Local", ts[11:16]
@@ -319,7 +324,7 @@ class L1Writer:
             "pending_count": len(messages),
             "messages": [
                 {
-                    "msg_id": msg.get("msg_id", ""),
+                    "id": msg.get("id", ""),
                     "role": msg.get("role", ""),
                     "content": msg.get("content", ""),
                     "timestamp": msg.get("timestamp", "")
