@@ -634,7 +634,7 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         # 每块处理完后更新状态，确保进度不丢失
         total_lines = 0
         total_items = 0
-        chunks = self.session_manager.get_session_chunks(max_messages_per_chunk=200)
+        chunks = self.session_manager.get_session_chunks(max_tokens_per_chunk=100000)
 
         for chunk_idx, (chunk_messages, chunk_last_msg_id) in enumerate(chunks):
             print(f"[Heartbeat] 处理块 {chunk_idx+1}/{len(chunks)}, {len(chunk_messages)} 条消息")
