@@ -279,20 +279,72 @@ __SESSION_CONTENT__
     def _format_messages_for_prompt(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         将消息列表格式化为 prompt 可用的文本（带1-based序号）
+        使用 parentId 链筛选，只保留用户消息和给用户的回复，过滤内部思考
 
         Returns:
             {"text": str, "timestamps": {idx: timestamp}}  # timestamps 的 key 是 1-based 序号
         """
+        # 1. 构建 id→message 映射，用于 parentId 链追溯
+        id_map = {msg.get('id'): msg for msg in messages if msg.get('id')}
+        
+        # 2. 判断消息是否是给用户看的（不是内部思考）
+        def is_user_facing(msg: Dict[str, Any]) -> bool:
+            role = msg.get('role', '')
+            
+            # user 消息全部保留
+            if role == 'user':
+                return True
+            
+            # toolResult 直接丢弃
+            if role == 'toolResult':
+                return False
+            
+            # assistant 消息需要追溯 parentId 链
+            if role == 'assistant':
+                current_id = msg.get('parentId')
+                depth = 0
+                max_depth = 10  # 防止无限循环
+                
+                while current_id and depth < max_depth:
+                    parent = id_map.get(current_id)
+                    if not parent:
+                        break
+                    
+                    parent_role = parent.get('role', '')
+                    
+                    # 如果追溯到 user，说明是给用户的回复
+                    if parent_role == 'user':
+                        return True
+                    
+                    # 如果追溯到 toolResult，说明是内部思考
+                    if parent_role == 'toolResult':
+                        return False
+                    
+                    # 继续向上追溯
+                    current_id = parent.get('parentId')
+                    depth += 1
+                
+                # 默认保留（无法确定时保守处理）
+                return True
+            
+            # 其他角色默认保留
+            return True
+        
+        # 3. 过滤消息
+        filtered_messages = [m for m in messages if is_user_facing(m)]
+        
+        # 4. 格式化消息
         formatted_lines = []
         timestamps = {}  # {1-based-idx: timestamp}
         msg_idx = 0
 
-        for msg in messages:
+        for msg in filtered_messages:
             msg_idx += 1
             timestamp = msg.get("timestamp", "")
             timestamps[msg_idx] = timestamp  # 记录每个 idx 对应的 timestamp
             
             role = msg.get("role", "unknown")
+            
             # content 可能是 list(富文本格式)或 string,需要统一处理
             raw_content = msg.get("content", "")
             if isinstance(raw_content, list):
@@ -302,15 +354,26 @@ __SESSION_CONTENT__
                 )
             else:
                 content = str(raw_content)
-            # 清洗工具输出噪声
-            content = self._clean_content(content)
-            content = content.strip()
+            
+            # 清洗工具输出噪声（现在返回字典）
+            cleaned = self._clean_content(content)
+            content = cleaned["content"].strip()
+            sender = cleaned.get("sender")  # 群聊时用于区分发送者
+            
             # 跳过空消息和短消息
             if len(content) < self.min_message_length:
                 continue
 
             # 角色显示名称
-            role_display = "用户" if role == "user" else ("助手" if role == "assistant" else role)
+            if role == "user":
+                role_display = "用户"
+            elif role == "assistant":
+                role_display = "助手"
+            else:
+                role_display = role
+            
+            # 群聊时显示发送者
+            sender_info = f"[{sender}] " if sender else ""
 
             # 格式化时间（用于显示）
             time_str = ""
@@ -321,7 +384,7 @@ __SESSION_CONTENT__
                 except:
                     pass
 
-            formatted_lines.append(f"[{msg_idx}] {time_str}{role_display}: {content}")
+            formatted_lines.append(f"[{msg_idx}] {time_str}{role_display}: {sender_info}{content}")
 
         return {
             "text": "\n\n".join(formatted_lines),
