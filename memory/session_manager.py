@@ -147,21 +147,21 @@ class SessionManager:
         other_chars = len(text) - chinese_chars - english_words
         return int(chinese_chars * 2 + english_words * 1.3 + other_chars)
 
-    def get_session_chunks(self, max_tokens_per_chunk: int = 100000) -> List[Tuple[List[Dict[str, Any]], Optional[str]]]:
+    def get_session_chunks(self, max_messages_per_chunk: int = 600) -> List[Tuple[List[Dict[str, Any]], Optional[str]]]:
         """
-        获取 session 消息分块（Token-based）
+        获取 session 消息分块
 
         用于处理大量历史消息时，避免单次 Prompt 过长。
 
         流程：
         1. 读取当前 session 所有消息（过滤 toolResult）
-        2. 按 max_tokens_per_chunk 切分成多个块
+        2. 按 max_messages_per_chunk 切分成多个块
         3. 返回 [(messages_chunk, last_msg_id_of_chunk), ...]
 
         调用方应该逐块处理，每块处理完后更新 state_manager 的 last_processed_msg_id。
 
         Args:
-            max_tokens_per_chunk: 每块最大 token 数，默认 100k
+            max_messages_per_chunk: 每块最大消息数，默认 600
 
         Returns:
             [(messages, last_msg_id), ...] 列表
@@ -173,35 +173,18 @@ class SessionManager:
         if not session_key or not all_messages:
             return []
 
-        # Token-based 分块
+        # 按条数分块
         chunks = []
-        current_chunk = []
-        current_tokens = 0
-        
-        for msg in all_messages:
-            msg_text = msg.get('content', '') if isinstance(msg.get('content'), str) else str(msg.get('content', ''))
-            msg_tokens = self.estimate_tokens(msg_text)
-            
-            # 超过限制，先保存当前 chunk
-            if current_tokens + msg_tokens > max_tokens_per_chunk and current_chunk:
-                chunk_last_msg_id = current_chunk[-1].get('id')
-                chunks.append((current_chunk, chunk_last_msg_id))
-                print(f"[SessionManager] Chunk {len(chunks)}: 消息 {len(current_chunk)}, tokens~{current_tokens}")
-                current_chunk = []
-                current_tokens = 0
-            
-            current_chunk.append(msg)
-            current_tokens += msg_tokens
-        
-        # 最后一 chunk
-        if current_chunk:
-            chunk_last_msg_id = current_chunk[-1].get('id')
-            chunks.append((current_chunk, chunk_last_msg_id))
-            print(f"[SessionManager] Chunk {len(chunks)}: 消息 {len(current_chunk)}, tokens~{current_tokens}")
+        total = len(all_messages)
 
-        print(f"[SessionManager] 共 {len(chunks)} 块, 总消息 {len(all_messages)}")
+        for i in range(0, total, max_messages_per_chunk):
+            chunk_messages = all_messages[i:i + max_messages_per_chunk]
+            chunk_last_msg_id = chunk_messages[-1].get('id') if chunk_messages else None
+            chunks.append((chunk_messages, chunk_last_msg_id))
+            print(f"[SessionManager] Chunk {len(chunks)}: 消息 {i+1}-{min(i+max_messages_per_chunk, total)}, last_msg_id={chunk_last_msg_id}")
+
+        print(f"[SessionManager] 共 {len(chunks)} 块, 总消息 {total}")
         return chunks
-
     def _get_sessions_dir(self) -> Path:
         """
         获取当前 agent 的 sessions 目录
