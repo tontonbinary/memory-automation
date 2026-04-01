@@ -8,6 +8,6 @@
   "processing_old_session_key": null,
   "processing_old_session_started_at": null,
   "updated_at": "2026-03-31T14:18:18.478124",
-  "agent_type": "开发型",
+  "agent_types": ["开发型", "系统管理型"],
   "custom_tags": []
 }

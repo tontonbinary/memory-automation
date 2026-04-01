@@ -273,6 +273,23 @@ __SESSION_CONTENT__
                 continue
             cleaned_lines.append(line)
         content = '\n'.join(cleaned_lines)
+        
+        # 去掉各种 untrusted metadata 块
+        content = re.sub(r'Conversation info \(untrusted metadata\):\s*```json\s*\{[\s\S]*?\}\s*```', '', content)
+        content = re.sub(r'Sender \(untrusted metadata\):\s*```json\s*\{[\s\S]*?\}\s*```', '', content)
+        content = re.sub(r'Thread starter \(untrusted, for context\):\s*```json\s*\{[\s\S]*?\}\s*```', '', content)
+        content = re.sub(r'Replied message \(untrusted, for context\):\s*```json\s*\{[\s\S]*?\}\s*```', '', content)
+        content = re.sub(r'Forwarded message context \(untrusted metadata\):\s*```json\s*\{[\s\S]*?\}\s*```', '', content)
+        content = re.sub(r'Chat history since last reply \(untrusted, for context\):\s*```json\s*[\s\S]*?```', '', content)
+        
+        # 去掉 [message_id: xxx] 行
+        content = re.sub(r'\[message_id:[^\]]+\]\s*\n?', '', content)
+        
+        # 去掉 sender ID 前缀（ou_xxx: 开头的行）
+        content = re.sub(r'^ou_[a-z0-9]+:\s*', '', content, flags=re.MULTILINE)
+        
+        # 去掉空 ```json 块
+        content = re.sub(r'```json\s*\{[\s\S]*?\}\s*```', '', content)
 
         return content.strip()
 
