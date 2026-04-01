@@ -355,10 +355,10 @@ __SESSION_CONTENT__
             else:
                 content = str(raw_content)
             
-            # 清洗工具输出噪声（现在返回字典）
-            cleaned = self._clean_content(content)
-            content = cleaned["content"].strip()
-            sender = cleaned.get("sender")  # 群聊时用于区分发送者
+            # 清洗工具输出噪声
+            content = self._clean_content(content)
+            content = content.strip()
+            sender = None  # 简化处理，不提取 sender
             
             # 跳过空消息和短消息
             if len(content) < self.min_message_length:
