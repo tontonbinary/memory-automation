@@ -44,6 +44,9 @@ class MessageProcessor:
         if not messages:
             return 0, [], None
 
+        # 保存清洗后的 session 到 dist_session/
+        self._save_cleaned_session(messages)
+
         # LLM 蒸馏（支持 fallback 到正则）
         raw_items = self.distiller.distill_messages(messages, use_llm=True)
         # 转换 DistilledItem dataclass 为 dict（新格式：action/oput/improve）
@@ -204,3 +207,44 @@ class MessageProcessor:
             item['event_type'] = event_type
 
         return distilled_items
+    def _save_cleaned_session(self, messages: List[Dict[str, Any]]) -> str:
+        """
+        保存清洗后的 session 到 dist_session/ 目录
+        
+        Args:
+            messages: 清洗后的消息列表
+            
+        Returns:
+            保存的文件路径中的日期部分，用于 L1 来源引用
+        """
+        import json
+        from pathlib import Path
+        
+        if not messages:
+            return ""
+        
+        # 获取 session 日期（从第一条消息时间戳）
+        first_ts = messages[0].get('timestamp', '') if messages else ''
+        date_str = first_ts[:10] if first_ts else 'unknown'
+        date_part = date_str[5:]  # MM-DD
+        
+        # dist_session 目录
+        agent_id = self.config.get('agent_id', 'unknown')
+        dist_dir = Path(f'~/.openclaw/agents/{agent_id}/dist_session').expanduser()
+        dist_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 文件名：dist_session/MM-DD_{uuid_prefix}.json
+        # 使用第一条消息的 id 前缀确保唯一性
+        first_id = messages[0].get('id', 'unknown')[:8] if messages else 'unknown'
+        dist_file = dist_dir / f'{date_part}_{first_id}.json'
+        
+        # 保存为格式化的 JSON（方便阅读和回溯）
+        with open(dist_file, 'w', encoding='utf-8') as f:
+            json.dump(messages, f, ensure_ascii=False, indent=2)
+        
+        print(f"[MessageProcessor] 清洗后 session 已保存: {dist_file}")
+        
+        # 返回用于 L1 来源引用的标识：dist_session/MM-DD#L{idx}
+        # 注意：实际索引由蒸馏时的 source_idx 决定
+        return f'dist_session/{date_part}'
+
