@@ -365,15 +365,20 @@ __SESSION_CONTENT__
             # content 可能是 list(富文本格式)或 string,需要统一处理
             raw_content = msg.get("content", "")
             if isinstance(raw_content, list):
-                content = " ".join(
-                    item.get("text", "") for item in raw_content
-                    if isinstance(item, dict) and item.get("type") == "text"
-                )
+                # kimi 方式：每块单独清洗后再连接（不用空格拆散metadata块）
+                cleaned_parts = []
+                for item in raw_content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        text = item.get("text", "")
+                        if text:
+                            cleaned = self._clean_content(text)
+                            cleaned = cleaned.strip()
+                            if cleaned:
+                                cleaned_parts.append(cleaned)
+                content = "\n".join(cleaned_parts)
             else:
                 content = str(raw_content)
-            
-            # 清洗工具输出噪声
-            content = self._clean_content(content)
+                content = self._clean_content(content)
             content = content.strip()
             sender = None  # 简化处理，不提取 sender
             
