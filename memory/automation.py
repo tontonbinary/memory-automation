@@ -17,7 +17,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
-from .state_manager import StateManager
 from .session_manager import SessionManager
 from .message_processor import MessageProcessor
 from .pattern_detector import PatternDetector
@@ -41,16 +40,13 @@ class MemoryAutomation:
         self.agent_id = agent_id or self._detect_agent_id()
         self.config = self._load_config(config_path)
 
-        # 初始化组件
-        self.state_manager = StateManager(self.config.get("state_file", "memory/heartbeat-state.json"))
-
         # 初始化参考内容管理器（从 heartbeat-state.json 读取配置）
         self.reference_manager = ReferenceManager(agent_id=self.agent_id or "code")
 
-        # 初始化新模块
+        # 初始化 session_manager（合并了 state_manager 功能）
         self.session_manager = SessionManager(
             agent_id=self.agent_id,
-            state_manager=self.state_manager
+            state_file=self.config.get("state_file", "memory/heartbeat-state.json")
         )
         self.l1_writer = L1Writer(
             agent_id=self.agent_id,
@@ -591,30 +587,20 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         # 检查是否需要先处理旧 session 的未蒸馏消息
         current_session_key, _, _ = self.get_current_session()
         if current_session_key:
-            last_session_info = self.state_manager.get_last_session_info()
-            old_session_key = last_session_info.get("last_session_key")
-            old_last_msg_id = last_session_info.get("last_processed_msg_id")
+            last_state = self.session_manager._load_state()
+            old_session_key = last_state.get("last_session_key")
+            old_last_msg_id = last_state.get("last_processed_msg_id")
 
             if old_session_key and old_session_key != current_session_key:
-                # 检查是否正在处理这个旧 session（防止重复处理）
-                if self.state_manager.is_old_session_processing(old_session_key):
-                    print(f"[MemoryAutomation] [Manual] 旧 session 正在处理中，跳过: {old_session_key}")
-                else:
-                    print(f"[MemoryAutomation] [Manual] 检测到 session 切换: {old_session_key} -> {current_session_key}")
-                    print(f"[MemoryAutomation] [Manual] 先处理旧 session 的未蒸馏消息...")
-                    
-                    # 标记开始处理
-                    self.state_manager.mark_old_session_processing(old_session_key)
-                    
-                    old_items_count, _ = self.process_old_session(
-                        old_session_key, old_last_msg_id
-                    )
-                    
-                    # 处理完成，取消标记
-                    self.state_manager.unmark_old_session_processing()
+                print(f"[MemoryAutomation] [Manual] 检测到 session 切换: {old_session_key} -> {current_session_key}")
+                print(f"[MemoryAutomation] [Manual] 先处理旧 session 的未蒸馏消息...")
 
-                    result["old_session_processed"] = True
-                    result["old_session_items"] = old_items_count
+                old_items_count, _ = self.process_old_session(
+                    old_session_key, old_last_msg_id
+                )
+
+                result["old_session_processed"] = True
+                result["old_session_items"] = old_items_count
         # ===== Session 切换处理结束 =====
 
         # 获取当前会话（只获取新消息）
@@ -626,32 +612,23 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
         if not messages:
             result["reason"] = "没有新消息需要处理"
-            # 仍然更新状态，避免重复检查
-            self.state_manager.update_after_process(session_key, 0, last_msg_id)
+            # 更新状态，避免重复检查
+            self.session_manager.update_last(session_key, last_msg_id, 0)
             return result
 
-        # 切块处理：避免单次 Prompt 过长
-        # 每块处理完后更新状态，确保进度不丢失
-        total_lines = 0
-        total_items = 0
-        chunks = self.session_manager.get_session_chunks(max_messages_per_chunk=200)
+        # 读取后立即标记（保存进度）
+        self.session_manager.update_last(session_key, last_msg_id, len(messages))
 
-        for chunk_idx, (chunk_messages, chunk_last_msg_id) in enumerate(chunks):
-            print(f"[Heartbeat] 处理块 {chunk_idx+1}/{len(chunks)}, {len(chunk_messages)} 条消息")
-            lines_written, items, final_msg_id = self.process_session(chunk_messages, force=True)
-            total_lines += lines_written
-            total_items += len(items)
-
-            # 每块处理完后立即更新状态
-            self.state_manager.update_after_process(session_key, len(items), chunk_last_msg_id)
+        # message_processor 内部处理：切块→保存→蒸馏→写入
+        # 不再手动分块循环
+        lines_written, items, final_msg_id = self.message_processor.process_session(messages, force=True)
 
         result.update({
             "triggered": True,
             "reason": "手动触发成功",
-            "items_distilled": total_items,
-            "lines_written": total_lines,
-            "session_key": session_key,
-            "chunks_processed": len(chunks)
+            "items_distilled": len(items),
+            "lines_written": lines_written,
+            "session_key": session_key
         })
 
         return result
@@ -722,43 +699,33 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
         # 检查是否需要处理
         interval = self.config.get("heartbeat_interval_minutes", 30)
-        should_process, reason = self.state_manager.check_should_process(
+        should_process, reason = self.session_manager.check_should_process(
             session_key, interval
         )
 
         # ===== Session 切换处理 =====
         # 如果是 session_key 变化，先处理旧 session 的未蒸馏消息
         if reason and "session_key 变化" in reason:
-            old_session_info = self.state_manager.get_last_session_info()
-            old_session_key = old_session_info.get("last_session_key")
-            old_last_msg_id = old_session_info.get("last_processed_msg_id")
+            # 获取上次的 session 信息
+            last_session = self.session_manager._load_state().get("last_session_key")
+            last_msg = self.session_manager.get_last_processed_msg_id()
 
-            if old_session_key and old_session_key != session_key:
-                # 检查是否正在处理这个旧 session（防止重复处理）
-                if self.state_manager.is_old_session_processing(old_session_key):
-                    print(f"[MemoryAutomation] [Heartbeat] 旧 session 正在处理中，跳过: {old_session_key}")
+            if last_session and last_session != session_key:
+                print(f"[MemoryAutomation] [Heartbeat] 检测到 session 切换: {last_session} -> {session_key}")
+                print(f"[MemoryAutomation] [Heartbeat] 先处理旧 session 的未蒸馏消息...")
+
+                # 处理旧 session
+                old_items_count, old_items = self.process_old_session(
+                    last_session, last_msg
+                )
+
+                result["old_session_processed"] = True
+                result["old_session_items"] = old_items_count
+
+                if old_items_count > 0:
+                    print(f"[MemoryAutomation] [Heartbeat] 旧 session 处理完成: {old_items_count} 项已蒸馏")
                 else:
-                    print(f"[MemoryAutomation] [Heartbeat] 检测到 session 切换: {old_session_key} -> {session_key}")
-                    print(f"[MemoryAutomation] [Heartbeat] 先处理旧 session 的未蒸馏消息...")
-                    
-                    # 标记开始处理
-                    self.state_manager.mark_old_session_processing(old_session_key)
-                    
-                    # 处理旧 session
-                    old_items_count, old_items = self.process_old_session(
-                        old_session_key, old_last_msg_id
-                    )
-                    
-                    # 处理完成，取消标记
-                    self.state_manager.unmark_old_session_processing()
-
-                    result["old_session_processed"] = True
-                    result["old_session_items"] = old_items_count
-
-                    if old_items_count > 0:
-                        print(f"[MemoryAutomation] [Heartbeat] 旧 session 处理完成: {old_items_count} 项已蒸馏")
-                    else:
-                        print(f"[MemoryAutomation] [Heartbeat] 旧 session 无遗漏消息或已全部处理")
+                    print(f"[MemoryAutomation] [Heartbeat] 旧 session 无遗漏消息或已全部处理")
         # ===== Session 切换处理结束 =====
 
         if not should_process:
@@ -769,25 +736,24 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
         if not messages:
             result["reason"] = "没有新消息"
-            self.state_manager.update_after_process(session_key, 0, last_msg_id)
+            self.session_manager.update_last(session_key, last_msg_id, 0)
             return result
 
-        # 写入 pending_queue，让 Agent 自己蒸馏
-        queue_path = self._write_pending_queue(messages)
-
+        # 读取后立即标记
         update_msg_id = last_msg_id or (messages[-1].get("id") if messages else None)
-        self.state_manager.update_after_process(session_key, 0, update_msg_id)
+        self.session_manager.update_last(session_key, update_msg_id, len(messages))
+
+        # 直接处理（不再写 pending_queue）
+        lines_written, items, final_msg_id = self.message_processor.process_session(messages, force=True)
 
         result.update({
             "triggered": True,
-            "reason": f"发现 {len(messages)} 条新消息待蒸馏",
-            "pending_count": len(messages),
-            "queue_file": str(queue_path),
+            "reason": f"Heartbeat 处理完成",
+            "pending_count": 0,
+            "items_distilled": len(items),
+            "lines_written": lines_written,
             "session_key": session_key
         })
-
-        # Agent 会在自己的上下文看到这条消息并执行蒸馏
-        print(f"\n[MEMORY] 发现 {len(messages)} 条新消息待蒸馏，Agent 请执行记忆蒸馏")
 
         return result
 

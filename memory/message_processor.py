@@ -4,6 +4,8 @@ Message Processor - 消息处理模块
 处理会话消息的蒸馏和写入
 """
 
+import json
+from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 from dataclasses import asdict
@@ -29,64 +31,152 @@ class MessageProcessor:
         self.distiller = distiller
         self.reference_manager = reference_manager
 
+    def _get_session_chunks(self, messages: List[Dict[str, Any]], 
+                           max_messages_per_chunk: int = 600) -> List[Tuple[List[Dict[str, Any]], int, str]]:
+        """
+        将消息列表切分成多个块
+
+        Args:
+            messages: 消息列表
+            max_messages_per_chunk: 每块最大消息数，默认 600
+
+        Returns:
+            [(messages_chunk, chunk_idx, chunk_name), ...]
+            - messages_chunk: 该块的消息列表
+            - chunk_idx: 块索引（从1开始）
+            - chunk_name: 块名称（如 "03-25#L1"）
+        """
+        if not messages:
+            return []
+
+        # 从第一条消息获取日期
+        first_ts = messages[0].get("timestamp", "") if messages else ""
+        date_str = first_ts[:10] if first_ts else datetime.now().strftime("%m-%d")
+        # 格式化为 MM-DD
+        if "-" in date_str and len(date_str) == 10:
+            date_str = date_str[5:7] + "-" + date_str[8:10]  # "03-25"
+        else:
+            date_str = datetime.now().strftime("%m-%d")
+
+        chunks = []
+        total = len(messages)
+
+        for i in range(0, total, max_messages_per_chunk):
+            chunk_messages = messages[i:i + max_messages_per_chunk]
+            chunk_idx = (i // max_messages_per_chunk) + 1
+            chunk_name = f"{date_str}#L{chunk_idx}"
+            chunks.append((chunk_messages, chunk_idx, chunk_name))
+
+        return chunks
+
+    def _save_clean_session(self, chunk_messages: List[Dict[str, Any]], 
+                           chunk_name: str) -> Optional[Path]:
+        """
+        保存清洗后的 session 块到文件
+
+        Args:
+            chunk_messages: 块的消息列表
+            chunk_name: 块名称（如 "03-25#L1"）
+
+        Returns:
+            保存的文件路径，或 None（失败时）
+        """
+        # 获取 agent 的 clean_session 目录
+        clean_dir = Path(f"~/.openclaw/agents/{self.agent_id}/clean_session").expanduser()
+        clean_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path = clean_dir / f"{chunk_name}.json"
+
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(chunk_messages, f, ensure_ascii=False, indent=2)
+            print(f"[MessageProcessor] 保存 clean_session: {file_path} ({len(chunk_messages)} 条)")
+            return file_path
+        except IOError as e:
+            print(f"[MessageProcessor] 保存 clean_session 失败: {e}")
+            return None
+
     def process_session(self, messages: List[Dict[str, Any]],
                        force: bool = False) -> Tuple[int, List[Dict[str, Any]], Optional[str]]:
         """
         处理会话消息，蒸馏并写入 L1
+
+        流程：
+        1. 切块（每块最多 600 条）
+        2. 保存每个块到 clean_session
+        3. 蒸馏每个块
+        4. 写入 L1
 
         Args:
             messages: 消息列表
             force: 是否强制处理（忽略状态检查）
 
         Returns:
-            (写入行数, 蒸馏项列表, 最后消息ID)
+            (总写入行数, 所有蒸馏项列表, 最后消息ID)
         """
         if not messages:
             return 0, [], None
 
-        # LLM 蒸馏（支持 fallback 到正则）
-        raw_items = self.distiller.distill_messages(messages, use_llm=True)
-        # 转换 DistilledItem dataclass 为 dict（新格式：action/oput/improve）
-        distilled_items = []
-        for item in raw_items:
-            if hasattr(item, 'item_type'):
-                d = asdict(item)
-                # 移除旧字段（兼容）
-                d.pop('follow_up', None)
-                d.pop('outcome', None)
-                distilled_items.append(d)
-            else:
-                distilled_items.append(item)
+        # 1. 切块
+        chunks = self._get_session_chunks(messages, max_messages_per_chunk=600)
+        print(f"[MessageProcessor] 切块完成: {len(chunks)} 块")
 
-        if not distilled_items:
-            print("[MessageProcessor] 未提取到有效信息")
-            # 返回最后一条消息的ID用于更新状态
-            last_msg_id = messages[-1].get("id") if messages else None
-            return 0, [], last_msg_id
+        total_lines = 0
+        all_items = []
+        last_msg_id = None
 
-        # 获取第一条消息的时间戳作为 session 开始时间（用于推断时区）
-        session_start_time = messages[0].get("timestamp") if messages else None
+        # 2. 处理每个块
+        for chunk_messages, chunk_idx, chunk_name in chunks:
+            print(f"[MessageProcessor] 处理块 {chunk_idx}/{len(chunks)}: {len(chunk_messages)} 条消息")
 
-        # 从蒸馏项直接获取 timestamp（DistilledItem.timestamp 包含正确的原始时间戳）
-        item_times = []
-        for item in distilled_items:
-            ts = item.get('timestamp', '') if isinstance(item, dict) else getattr(item, 'timestamp', '')
-            ts = ts or ''
-            item_times.append(ts if ts else session_start_time or '')
+            # 2.1 保存 clean_session
+            clean_path = self._save_clean_session(chunk_messages, chunk_name)
 
-        # 5 类事件类型判断
-        distilled_items = self._classify_event_types(distilled_items)
+            # 2.2 LLM 蒸馏（支持 fallback 到正则）
+            raw_items = self.distiller.distill_messages(chunk_messages, use_llm=True)
 
-        # 写入 L1
-        lines_written = self.l1_writer.write(
-            distilled_items, session_start_time, item_times=item_times)
+            # 转换 DistilledItem dataclass 为 dict
+            distilled_items = []
+            for item in raw_items:
+                if hasattr(item, 'item_type'):
+                    d = asdict(item)
+                    d.pop('follow_up', None)
+                    d.pop('outcome', None)
+                    distilled_items.append(d)
+                else:
+                    distilled_items.append(item)
 
-        print(f"[MessageProcessor] 已写入 {lines_written} 行，提取 {len(distilled_items)} 项")
+            if not distilled_items:
+                print(f"[MessageProcessor] 块 {chunk_idx} 未提取到有效信息，跳过")
+                last_msg_id = chunk_messages[-1].get("id") if chunk_messages else None
+                continue
 
-        # 获取最后一条消息的ID
-        last_msg_id = messages[-1].get("id") if messages else None
+            # 获取第一条消息的时间戳
+            session_start_time = chunk_messages[0].get("timestamp") if chunk_messages else None
 
-        return lines_written, distilled_items, last_msg_id
+            # 从蒸馏项获取 timestamp
+            item_times = []
+            for item in distilled_items:
+                ts = item.get('timestamp', '') if isinstance(item, dict) else getattr(item, 'timestamp', '')
+                ts = ts or ''
+                item_times.append(ts if ts else session_start_time or '')
+
+            # 5 类事件类型判断
+            distilled_items = self._classify_event_types(distilled_items)
+
+            # 2.3 写入 L1（带来源索引）
+            lines_written = self.l1_writer.write(
+                distilled_items, session_start_time, item_times=item_times,
+                source=f"clean_session/{chunk_name}")
+
+            print(f"[MessageProcessor] 块 {chunk_idx} 已写入 {lines_written} 行，提取 {len(distilled_items)} 项")
+
+            total_lines += lines_written
+            all_items.extend(distilled_items)
+            last_msg_id = chunk_messages[-1].get("id") if chunk_messages else None
+
+        print(f"[MessageProcessor] 处理完成: {len(chunks)} 块, 共 {total_lines} 行, {len(all_items)} 项")
+        return total_lines, all_items, last_msg_id
 
     def process_old_session(self, old_session_key: str,
                            last_processed_msg_id: Optional[str] = None) -> Tuple[int, List[Dict[str, Any]]]:

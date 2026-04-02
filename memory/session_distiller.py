@@ -128,6 +128,19 @@ Session Distiller - 将对话历史提炼为结构化记忆
 ## 去重规则
 - 重复项只提取最终项，标注重复次数（如"决定用Vue" *3次）
 
+## 蒸馏三原则
+
+1. **聚合多条消息**：相关/相似内容合并成一条记忆
+   - 不要逐条提取，要把同一主题的对话聚合成一个记忆点
+   
+2. **标签 = 核心主题**：不是"话题标签"，而是"这条记忆最重要的事"
+   - ❌ 不好："#会议 #讨论 #代码"
+   - ✅ 正确："#架构决策 #技术选型"
+   
+3. **内容 = 精华总结**：不是复述，而是提炼后的精华
+   - ❌ 不好："用户说了很多关于API设计的事情，包括RESTful规范和认证方式..."
+   - ✅ 正确："确定采用RESTful API + JWT认证方案"
+
 ## 参考内容使用指南
 
 **Agent类型（agent_types）**
@@ -838,6 +851,8 @@ __SESSION_CONTENT__
         distilled_items = []
 
         for idx, msg in enumerate(messages):
+            # 获取消息时间戳
+            msg_timestamp = msg.get("timestamp", "")
             # content 可能是 list(富文本格式)或 string,需要统一处理
             raw_content = msg.get("content", "")
             if isinstance(raw_content, list):
@@ -883,6 +898,8 @@ __SESSION_CONTENT__
                             action=action,
                             oput=oput,
                             source_message=content[:200],
+                            timestamp=msg_timestamp,
+                            source_idx=idx + 1,  # 1-based index
                         )
 
                         # 去重检查

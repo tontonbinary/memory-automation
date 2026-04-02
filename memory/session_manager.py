@@ -1,21 +1,133 @@
 #!/usr/bin/env python3
 """
 Session Manager - Session 管理模块
-处理会话的获取、查找和读取
+处理会话的获取、查找、读取和状态管理
 """
 
 import json
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
 
 class SessionManager:
-    """Session 管理器"""
+    """Session 管理器（合并 state_manager 功能）"""
 
-    def __init__(self, agent_id: str, state_manager=None):
+    def __init__(self, agent_id: str, state_file: Optional[str] = None):
         self.agent_id = agent_id
-        self.state_manager = state_manager
+        # 状态文件路径（取代 state_manager）
+        if state_file:
+            self.state_file = Path(state_file).expanduser()
+        else:
+            self.state_file = Path(f"~/.openclaw/agents/{agent_id}/memory/heartbeat-state.json").expanduser()
+        self._ensure_directory()
+
+    def _ensure_directory(self):
+        """确保状态文件所在目录存在"""
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def _load_state(self) -> Dict[str, Any]:
+        """加载状态"""
+        if not self.state_file.exists():
+            return {
+                "last_session_key": None,
+                "last_processed_time": None,
+                "last_processed_msg_id": None,
+                "last_distilled_messages": 0,
+                "version": "2.0.0"
+            }
+        try:
+            with open(self.state_file, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                if not content:
+                    return {
+                        "last_session_key": None,
+                        "last_processed_time": None,
+                        "last_processed_msg_id": None,
+                        "last_distilled_messages": 0,
+                        "version": "2.0.0"
+                    }
+                return json.loads(content)
+        except (json.JSONDecodeError, IOError):
+            return {
+                "last_session_key": None,
+                "last_processed_time": None,
+                "last_processed_msg_id": None,
+                "last_distilled_messages": 0,
+                "version": "2.0.0"
+            }
+
+    def _save_state(self, state: Dict[str, Any]) -> bool:
+        """保存状态"""
+        try:
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.state_file, 'w', encoding='utf-8') as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            return True
+        except IOError as e:
+            print(f"[SessionManager] 保存状态失败: {e}")
+            return False
+
+    def update_last(self, session_key: str, last_msg_id: Optional[str], message_count: int = 0) -> bool:
+        """
+        更新最后处理的 session 信息（取代 state_manager.update_after_process）
+
+        Args:
+            session_key: 当前 session key
+            last_msg_id: 最后处理的消息 ID
+            message_count: 本次处理的消息数
+
+        Returns:
+            是否保存成功
+        """
+        state = self._load_state()
+        state.update({
+            "last_session_key": session_key,
+            "last_processed_time": datetime.now().isoformat(),
+            "last_processed_msg_id": last_msg_id,
+            "last_distilled_messages": message_count
+        })
+        return self._save_state(state)
+
+    def get_last_processed_msg_id(self) -> Optional[str]:
+        """获取上次处理的最后消息 ID"""
+        state = self._load_state()
+        return state.get("last_processed_msg_id")
+
+    def check_should_process(self, session_key: str, interval_minutes: int = 30) -> Tuple[bool, str]:
+        """
+        检查是否需要处理（取代 state_manager.check_should_process）
+
+        Args:
+            session_key: 当前 session key
+            interval_minutes: 最小处理间隔（分钟）
+
+        Returns:
+            (是否需要处理, 原因)
+        """
+        state = self._load_state()
+        last_time = state.get("last_processed_time")
+        last_session = state.get("last_session_key")
+
+        if not last_time:
+            return True, "首次处理"
+
+        if last_session != session_key:
+            return True, f"session_key 变化: {last_session} -> {session_key}"
+
+        # 检查时间间隔
+        try:
+            last_dt = datetime.fromisoformat(last_time.replace("Z", "+00:00"))
+            now_dt = datetime.now()
+            diff_minutes = (now_dt - last_dt).total_seconds() / 60
+
+            if diff_minutes >= interval_minutes:
+                return True, f"时间间隔足够 ({diff_minutes:.0f} 分钟)"
+            else:
+                return False, f"时间间隔不足 ({diff_minutes:.0f} 分钟 < {interval_minutes} 分钟)"
+        except (ValueError, TypeError):
+            return True, "时间解析异常，重新处理"
 
     def get_current_session(self) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
         """
@@ -56,9 +168,7 @@ class SessionManager:
                 return session_key, [], None
 
             # 获取上次处理的消息ID
-            last_processed_msg_id = None
-            if self.state_manager:
-                last_processed_msg_id = self.state_manager.get_last_processed_msg_id()
+            last_processed_msg_id = self.get_last_processed_msg_id()
 
             # 读取 JSONL 文件解析消息
             all_messages = []
@@ -130,45 +240,6 @@ class SessionManager:
         except Exception as e:
             print(f"[SessionManager] ❌ 获取会话异常: {e}")
             return "", [], None
-
-    def get_session_chunks(self, max_messages_per_chunk: int = 200) -> List[Tuple[List[Dict[str, Any]], Optional[str]]]:
-        """
-        获取 session 消息分块
-
-        用于处理大量历史消息时，避免单次 Prompt 过长。
-
-        流程：
-        1. 读取当前 session 所有消息（过滤 toolResult）
-        2. 按 max_messages_per_chunk 切分成多个块
-        3. 返回 [(messages_chunk, last_msg_id_of_chunk), ...]
-
-        调用方应该逐块处理，每块处理完后更新 state_manager 的 last_processed_msg_id。
-
-        Args:
-            max_messages_per_chunk: 每块最大消息数，默认 200
-
-        Returns:
-            [(messages, last_msg_id), ...] 列表
-            - messages: 该块的的消息列表
-            - last_msg_id: 该块最后一条消息的 msg_id
-        """
-        # 获取当前 session
-        session_key, all_messages, _ = self.get_current_session()
-        if not session_key or not all_messages:
-            return []
-
-        # 计算需要分几块
-        chunks = []
-        total = len(all_messages)
-
-        for i in range(0, total, max_messages_per_chunk):
-            chunk_messages = all_messages[i:i + max_messages_per_chunk]
-            chunk_last_msg_id = chunk_messages[-1].get('id') if chunk_messages else None
-            chunks.append((chunk_messages, chunk_last_msg_id))
-            print(f"[SessionManager] Chunk {len(chunks)}: 消息 {i+1}-{min(i+max_messages_per_chunk, total)}, last_msg_id={chunk_last_msg_id}")
-
-        print(f"[SessionManager] 共 {len(chunks)} 块, 总消息 {total}")
-        return chunks
 
     def _get_sessions_dir(self) -> Path:
         """

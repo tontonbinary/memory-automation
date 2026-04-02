@@ -123,9 +123,12 @@ class L1Writer:
             tag_str = " ".join([f"#{tag}" for tag in item["tags"]])
             lines.append(f"- **标签**：`{tag_str}`")
 
-        # 来源：session/MM-DD#L行号
-        session_date = item.get("session_date", "")
-        lines.append(f"- **来源**：session/{session_date[5:] if session_date else '??-??'}#L{line_number}")
+        # 来源：clean_session/MM-DD#L{idx} 或 session/MM-DD#L{行号}
+        source = item.get("_source")
+        if not source:
+            session_date = item.get("session_date", "")
+            source = f"session/{session_date[5:] if session_date else '??-??'}#L{line_number}"
+        lines.append(f"- **来源**：{source}")
 
         lines.append("")
         return "\n".join(lines)
@@ -133,7 +136,8 @@ class L1Writer:
     def write(self, items: List[Dict[str, Any]],
               session_start_time: str = None,
               session_end_time: str = None,
-              item_times: List[str] = None) -> int:
+              item_times: List[str] = None,
+              source: str = None) -> int:
         """
         写入 L1 存储文件（两段式格式）
 
@@ -142,10 +146,15 @@ class L1Writer:
             session_start_time: session 第一条消息的原始 timestamp
             session_end_time: session 结束时间戳
             item_times: 每项的原始 timestamp 列表，与 items 对齐
+            source: 来源标识（如 "clean_session/03-25#L1"）
 
         Returns:
             写入行数
         """
+        # 将 source 存入每个 item，供 _format_l1_entry 使用
+        if source:
+            for item in items:
+                item['_source'] = source
         has_item_times = item_times is not None and len(item_times) >= len(items)
 
         # 从第一条消息获取当前 session 的时区
