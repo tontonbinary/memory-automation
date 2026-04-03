@@ -22,8 +22,10 @@ class L1Writer:
         """获取当前 L1 文件路径"""
         if date_str is None:
             date_str = datetime.now().strftime("%Y-%m-%d")
-        template = self.config.get("l1_template",
-            "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md")
+        # 优先从 output.l1_template 读取，其次是顶层 l1_template，最后是默认
+        template = self.config.get("output", {}).get("l1_template") \
+            or self.config.get("l1_template") \
+            or "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md"
         path_str = template.format(agent=self.agent_id, date=date_str)
         return Path(path_str).expanduser()
 
@@ -123,11 +125,18 @@ class L1Writer:
             tag_str = " ".join([f"#{tag}" for tag in item["tags"]])
             lines.append(f"- **标签**：`{tag_str}`")
 
-        # 来源：clean_session/MM-DD#L{idx} 或 session/MM-DD#L{行号}
+        # 来源：clean_session/03-29#L3#idx=120
+        # 格式：{source}#idx={source_idx}
         source = item.get("_source")
         if not source:
             session_date = item.get("session_date", "")
             source = f"session/{session_date[5:] if session_date else '??-??'}#L{line_number}"
+        
+        # 拼入 source_idx（指向 clean_session 文件内的消息序号，1-based）
+        source_idx = item.get("source_idx")
+        if source_idx:
+            source = f"{source}#idx={source_idx}"
+        
         lines.append(f"- **来源**：{source}")
 
         lines.append("")

@@ -81,8 +81,10 @@ class MessageProcessor:
         Returns:
             保存的文件路径，或 None（失败时）
         """
-        # 获取 agent 的 clean_session 目录
-        clean_dir = Path(f"~/.openclaw/agents/{self.agent_id}/clean_session").expanduser()
+        # 获取 clean_session 目录（优先用 config，fallback 到 agent 目录）
+        clean_dir_str = self.config.get("output", {}).get("clean_session_dir",
+            f"~/.openclaw/agents/{self.agent_id}/clean_session")
+        clean_dir = Path(clean_dir_str).expanduser()
         clean_dir.mkdir(parents=True, exist_ok=True)
 
         file_path = clean_dir / f"{chunk_name}.json"
@@ -101,11 +103,12 @@ class MessageProcessor:
         """
         处理会话消息，蒸馏并写入 L1
 
-        流程：
-        1. 切块（每块最多 600 条）
-        2. 保存每个块到 clean_session
-        3. 蒸馏每个块
-        4. 写入 L1
+        流程（优化后 v2）：
+        1. 预清洗全部消息（parentId 链过滤 + 富文本提取 + _clean_content）
+        2. 对完整清洗消息蒸馏（得绝对 source_idx）
+        3. 切块（为 clean_session 文件保存 + L1 批次分组）
+        4. 保存每个块到 clean_session
+        5. 按块分组蒸馏结果，写入对应 L1
 
         Args:
             messages: 消息列表
@@ -117,64 +120,87 @@ class MessageProcessor:
         if not messages:
             return 0, [], None
 
-        # 1. 切块
-        chunks = self._get_session_chunks(messages, max_messages_per_chunk=600)
-        print(f"[MessageProcessor] 切块完成: {len(chunks)} 块")
+        # 1. 预清洗全部消息
+        cleaned_all = self.distiller.pre_clean_messages(messages)
+
+        if not cleaned_all:
+            print("[MessageProcessor] 预清洗后无有效消息")
+            return 0, [], None
+
+        print(f"[MessageProcessor] 预清洗完成: {len(messages)} 条 -> {len(cleaned_all)} 条")
+
+        # 2. 对完整清洗消息蒸馏（一次性，得到绝对 source_idx）
+        raw_items = self.distiller.distill_messages(cleaned_all, use_llm=True, pre_cleaned=True)
+
+        # 转换 DistilledItem dataclass 为 dict，展开 timestamp
+        distilled_all = []
+        for item in raw_items:
+            if hasattr(item, 'item_type'):
+                d = asdict(item)
+                d.pop('follow_up', None)
+                d.pop('outcome', None)
+                # 用 source_idx（1-based）从 cleaned_all 取对应 timestamp
+                src_idx = d.get('source_idx', 0)
+                if src_idx and 1 <= src_idx <= len(cleaned_all):
+                    d['timestamp'] = cleaned_all[src_idx - 1].get('timestamp', '')
+                distilled_all.append(d)
+            else:
+                distilled_all.append(item)
+
+        if not distilled_all:
+            print("[MessageProcessor] 蒸馏无有效结果")
+            return 0, [], cleaned_all[-1].get('id') if cleaned_all else None
+
+        # 事件类型判断
+        distilled_all = self._classify_event_types(distilled_all)
+
+        # 3. 切块（用于 clean_session 保存 + L1 分组）
+        chunks = self._get_session_chunks(cleaned_all, max_messages_per_chunk=600)
+        print(f"[MessageProcessor] 切块: {len(chunks)} 块，共 {len(distilled_all)} 项蒸馏结果")
 
         total_lines = 0
         all_items = []
-        last_msg_id = None
 
-        # 2. 处理每个块
+        # 4. 对每个块：保存 clean_session + 筛选该块的蒸馏结果写 L1
+        chunk_start = 0
         for chunk_messages, chunk_idx, chunk_name in chunks:
-            print(f"[MessageProcessor] 处理块 {chunk_idx}/{len(chunks)}: {len(chunk_messages)} 条消息")
+            chunk_size = len(chunk_messages)
+            chunk_end = chunk_start + chunk_size  # exclusive
 
-            # 2.1 保存 clean_session
+            # 4.1 保存 clean_session（已清洗）
             clean_path = self._save_clean_session(chunk_messages, chunk_name)
 
-            # 2.2 LLM 蒸馏（支持 fallback 到正则）
-            raw_items = self.distiller.distill_messages(chunk_messages, use_llm=True)
+            # 4.2 筛选 source_idx 落在 [chunk_start, chunk_end) 的蒸馏项
+            chunk_items = [
+                item for item in distilled_all
+                if item.get('source_idx') and chunk_start < item['source_idx'] <= chunk_end
+            ]
 
-            # 转换 DistilledItem dataclass 为 dict
-            distilled_items = []
-            for item in raw_items:
-                if hasattr(item, 'item_type'):
-                    d = asdict(item)
-                    d.pop('follow_up', None)
-                    d.pop('outcome', None)
-                    distilled_items.append(d)
-                else:
-                    distilled_items.append(item)
-
-            if not distilled_items:
-                print(f"[MessageProcessor] 块 {chunk_idx} 未提取到有效信息，跳过")
-                last_msg_id = chunk_messages[-1].get("id") if chunk_messages else None
+            if not chunk_items:
+                print(f"[MessageProcessor] 块 {chunk_idx} 无蒸馏项，跳过")
+                chunk_start = chunk_end
                 continue
 
-            # 获取第一条消息的时间戳
-            session_start_time = chunk_messages[0].get("timestamp") if chunk_messages else None
-
-            # 从蒸馏项获取 timestamp
+            # 提取 timestamps（与 chunk_items 对齐）
             item_times = []
-            for item in distilled_items:
+            for item in chunk_items:
                 ts = item.get('timestamp', '') if isinstance(item, dict) else getattr(item, 'timestamp', '')
-                ts = ts or ''
-                item_times.append(ts if ts else session_start_time or '')
+                item_times.append(ts or '')
 
-            # 5 类事件类型判断
-            distilled_items = self._classify_event_types(distilled_items)
+            session_start_time = chunk_messages[0].get('timestamp') if chunk_messages else None
 
-            # 2.3 写入 L1（带来源索引）
+            # 4.3 写入 L1
             lines_written = self.l1_writer.write(
-                distilled_items, session_start_time, item_times=item_times,
+                chunk_items, session_start_time, item_times=item_times,
                 source=f"clean_session/{chunk_name}")
 
-            print(f"[MessageProcessor] 块 {chunk_idx} 已写入 {lines_written} 行，提取 {len(distilled_items)} 项")
+            print(f"[MessageProcessor] 块 {chunk_idx}: {len(chunk_items)} 项 -> {lines_written} 行")
 
             total_lines += lines_written
-            all_items.extend(distilled_items)
-            last_msg_id = chunk_messages[-1].get("id") if chunk_messages else None
+            all_items.extend(chunk_items)
+            chunk_start = chunk_end
 
+        last_msg_id = cleaned_all[-1].get('id') if cleaned_all else None
         print(f"[MessageProcessor] 处理完成: {len(chunks)} 块, 共 {total_lines} 行, {len(all_items)} 项")
         return total_lines, all_items, last_msg_id
 
@@ -216,8 +242,14 @@ class MessageProcessor:
 
         print(f"[MessageProcessor] 从旧 session 收集到 {len(all_messages)} 条消息待蒸馏")
 
-        # LLM 蒸馏（支持 fallback 到正则）
-        raw_items = self.distiller.distill_messages(all_messages, use_llm=True)
+        # 预清洗后蒸馏
+        cleaned_messages = self.distiller.pre_clean_messages(all_messages)
+        if not cleaned_messages:
+            print("[MessageProcessor] 旧 session 预清洗后无有效消息")
+            return 0, []
+
+        # LLM 蒸馏（pre_cleaned=True）
+        raw_items = self.distiller.distill_messages(cleaned_messages, use_llm=True, pre_cleaned=True)
         # 转换 DistilledItem dataclass 为 dict
         distilled_items = [asdict(item) if hasattr(item, 'item_type') else item for item in raw_items]
 

@@ -226,15 +226,17 @@ __SESSION_CONTENT__
             skill_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             config_path = os.path.join(skill_dir, "config.json")
 
+        if config_path:
+            config_path = os.path.expanduser(config_path)
         if config_path and os.path.exists(config_path):
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     loaded = json.load(f)
-                    # 递归合并配置
-                    if "llm" in loaded:
-                        default_config["llm"].update(loaded["llm"])
-                    if "fallback_to_regex" in loaded:
-                        default_config["fallback_to_regex"] = loaded["fallback_to_regex"]
+                # 递归合并配置
+                if "llm" in loaded:
+                    default_config["llm"].update(loaded["llm"])
+                if "fallback_to_regex" in loaded:
+                    default_config["fallback_to_regex"] = loaded["fallback_to_regex"]
             except (json.JSONDecodeError, IOError) as e:
                 print(f"[SessionDistiller] 加载配置失败,使用默认配置: {e}")
 
@@ -529,7 +531,7 @@ __SESSION_CONTENT__
                 result = json.loads(response.read().decode('utf-8'))
 
                 # 解析响应
-                if "choices" in result and len(result["choices"]) > 0:
+                if result.get("choices") and len(result["choices"]) > 0:
                     msg = result["choices"][0].get("message", {})
                     # MiniMax-M2.7 使用 reasoning_content
                     content = msg.get("content") or msg.get("reasoning_content", "")
@@ -685,12 +687,16 @@ __SESSION_CONTENT__
 
         return []
 
-    def distill_with_llm(self, messages: List[Dict[str, Any]]) -> List[DistilledItem]:
+    def distill_with_llm(self, messages: List[Dict[str, Any]],
+                          pre_cleaned: bool = False) -> List[DistilledItem]:
         """
         使用 LLM 进行智能蒸馏
 
         Args:
             messages: 消息列表
+            pre_cleaned: 消息是否已经过预清洗
+                         - False（默认）：走 _format_messages_for_prompt 获取 json 和 timestamps
+                         - True：messages 已经是清洗后的格式，reconstruct json + timestamps from messages
 
         Returns:
             蒸馏后的记忆项列表
@@ -699,13 +705,31 @@ __SESSION_CONTENT__
             print("[SessionDistiller] LLM 蒸馏已禁用")
             return []
 
-        # 格式化会话内容
-        formatted = self._format_messages_for_prompt(messages)
-        timestamps_map = formatted["timestamps"]  # {1-based-idx: timestamp}
-
-        # 使用 JSON 格式（减少 token 开销）
-        session_json = json.dumps(formatted["json"], ensure_ascii=False)
-        session_content = session_json
+        if pre_cleaned:
+            # messages 已经是清洗后的消息列表（role/sender/timestamp/content）
+            # 重建 json 格式和 timestamps_map
+            timestamps_map = {}  # {1-based-idx: timestamp}
+            msg_list = []
+            for idx, msg in enumerate(messages):
+                idx_1based = idx + 1
+                ts = msg.get("timestamp", "")
+                timestamps_map[idx_1based] = ts
+                role_map = {"user": "u", "assistant": "a"}
+                msg_list.append({
+                    "r": role_map.get(msg.get("role", ""), msg.get("role", "")[:1]),
+                    "s": msg.get("sender", ""),
+                    "t": ts,
+                    "c": msg.get("content", "")[:300]  # 截断
+                })
+            session_json = json.dumps(msg_list, ensure_ascii=False)
+            session_content = session_json
+            print(f"[SessionDistiller] 预清洗模式: {len(messages)} 条消息直接给 LLM")
+        else:
+            # 格式化会话内容（原始流程）
+            formatted = self._format_messages_for_prompt(messages)
+            timestamps_map = formatted["timestamps"]  # {1-based-idx: timestamp}
+            session_json = json.dumps(formatted["json"], ensure_ascii=False)
+            session_content = session_json
 
         if not session_content or session_content == "null":
             print("[SessionDistiller] 没有足够的内容进行 LLM 蒸馏")
@@ -762,13 +786,11 @@ __SESSION_CONTENT__
                     source_idx = int(source_idx_raw) if source_idx_raw else 0
                 except (ValueError, TypeError):
                     source_idx = 0
-                
+
                 # 从 timestamps_map 获取 timestamp（source_idx 是 1-based）
-                # 边界检查：source_idx 可能在 LLM 看到的内容范围内，但不在 timestamps_map 中（如超出截断范围）
                 if source_idx in timestamps_map:
                     item_timestamp = timestamps_map[source_idx]
                 else:
-                    # source_idx 超出范围，使用 session 开始时间
                     item_timestamp = ""
 
                 item = DistilledItem(
@@ -795,13 +817,54 @@ __SESSION_CONTENT__
         print(f"[SessionDistiller] LLM 蒸馏完成,提取 {len(distilled_items)} 项")
         return distilled_items
 
-    def distill_messages(self, messages: List[Dict[str, Any]], use_llm: bool = True) -> List[DistilledItem]:
+    def pre_clean_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        预清洗消息列表：在切块之前完成完整清洗
+
+        流程：parentId 链过滤 + 富文本提取 + _clean_content
+        确保返回的消息都是"干净"的、可直接给 LLM 的内容
+
+        Args:
+            messages: 原始消息列表
+
+        Returns:
+            清洗后的消息列表（不含短消息）
+        """
+        formatted = self._format_messages_for_prompt(messages)
+        timestamps_map = formatted["timestamps"]
+
+        # 从 formatted["json"] 重建清洗后的消息列表
+        # formatted["json"] 每条格式: {"r": role, "s": sender, "t": timestamp, "c": content}
+        cleaned_messages = []
+        for msg_json in formatted["json"]:
+            role = msg_json.get("r", "")
+            sender = msg_json.get("s", "")
+            timestamp = msg_json.get("t", "")
+            content = msg_json.get("c", "")
+
+            if len(content) < self.min_message_length:
+                continue
+
+            cleaned_messages.append({
+                "role": role,
+                "sender": sender,
+                "timestamp": timestamp,
+                "content": content
+            })
+
+        print(f"[SessionDistiller] 预清洗: {len(messages)} 条 -> {len(cleaned_messages)} 条")
+        return cleaned_messages
+
+    def distill_messages(self, messages: List[Dict[str, Any]], use_llm: bool = True,
+                        pre_cleaned: bool = False) -> List[DistilledItem]:
         """
         从消息列表中蒸馏关键信息
 
         Args:
             messages: 消息列表,每个消息为字典,包含 role 和 content
             use_llm: 是否优先使用 LLM 蒸馏(默认 True)
+            pre_cleaned: 消息是否已经过预清洗(默认 False,
+                         为 True 时跳过内部 _format_messages_for_prompt)
 
         Returns:
             蒸馏后的记忆项列表
@@ -809,7 +872,7 @@ __SESSION_CONTENT__
         # 优先尝试 LLM 蒸馏
         if use_llm and self.llm_config.get("enabled", True):
             try:
-                llm_items = self.distill_with_llm(messages)
+                llm_items = self.distill_with_llm(messages, pre_cleaned=pre_cleaned)
                 if llm_items:
                     return llm_items
                 # LLM 返回空结果,检查是否启用降级
