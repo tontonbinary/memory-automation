@@ -165,7 +165,7 @@ Session Distiller - 将对话历史提炼为结构化记忆
     "content": "提炼内容",
     "emotion": "积极|负面|null",
     "tags": ["标签1", "标签2"],
-    "source_idx": 1
+    "source_idx": 1  // 消息序号，对应会话内容中 [1]、[2] 等方括号中的数字
   }]
 }
 ```
@@ -185,8 +185,9 @@ __SESSION_CONTENT__
 1. 只提取真正值得记忆的内容，过滤闲聊、重复、临时信息
 2. 内容要简洁具体，不要泛泛而谈
 3. 每个提取项必须指定 type，不允许其他 type 值
-4. 如果没有值得提取的内容，返回 {"items": []}
-5. **必须**返回合法的 JSON 格式，不要添加 markdown 代码块标记
+4. **source_idx 必填**：必须是消息在会话中的序号（对应 `[1]`、`[2]` 等方括号中的数字）
+5. 如果没有值得提取的内容，返回 {"items": []}
+6. **必须**返回合法的 JSON 格式，不要添加 markdown 代码块标记
 """
 
     def __init__(self, min_message_length: int = 10, config_path: Optional[str] = None,
