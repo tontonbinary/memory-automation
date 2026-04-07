@@ -428,6 +428,75 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         """
         return self.distiller.distill(messages)
 
+    def _generate_summary(self, items: List[Dict[str, Any]], lines_written: int) -> str:
+        """
+        生成处理完成的摘要信息
+        
+        Args:
+            items: 蒸馏的记忆项列表
+            lines_written: 写入的行数
+            
+        Returns:
+            格式化的摘要字符串
+        """
+        if not items:
+            return ""
+        
+        # 获取今天的 L1 文件路径
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        l1_file = f"~/.openclaw/workspaces/{self.agent_id}/workspace/memory/{today}.md"
+        l1_file_expanded = os.path.expanduser(l1_file)
+        
+        # 统计各类型数量
+        type_counts = {}
+        event_type_counts = {}
+        for item in items:
+            item_type = item.get('type', 'Unknown')
+            event_type = item.get('event_type', 'Unknown')
+            type_counts[item_type] = type_counts.get(item_type, 0) + 1
+            event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
+        
+        # 生成摘要
+        lines = []
+        lines.append("\n" + "="*50)
+        lines.append("📋 记忆记录完成")
+        lines.append("="*50)
+        lines.append(f"\n✓ 共提取 {len(items)} 条记忆，写入 {lines_written} 行")
+        
+        # 按记忆类型统计
+        if type_counts:
+            lines.append("\n【记忆类型】")
+            for t, count in sorted(type_counts.items(), key=lambda x: -x[1]):
+                lines.append(f"  • {t}: {count} 条")
+        
+        # 按事件类型统计
+        if event_type_counts:
+            lines.append("\n【事件类型】")
+            for et, count in sorted(event_type_counts.items(), key=lambda x: -x[1]):
+                lines.append(f"  • {et}: {count} 条")
+        
+        # 内容摘要（前3条）
+        lines.append("\n【内容摘要】")
+        for i, item in enumerate(items[:3], 1):
+            content = item.get('content', '')
+            # 截断过长的内容
+            if len(content) > 60:
+                content = content[:57] + "..."
+            item_type = item.get('type', 'Unknown')
+            lines.append(f"  {i}. [{item_type}] {content}")
+        
+        if len(items) > 3:
+            lines.append(f"  ... 还有 {len(items) - 3} 条")
+        
+        # 文件位置
+        lines.append(f"\n【记录位置】")
+        lines.append(f"  📁 {l1_file_expanded}")
+        
+        lines.append("\n" + "="*50)
+        
+        return "\n".join(lines)
+
     def _process_session_file(self, session_file: str) -> Dict[str, Any]:
         """
         处理指定的 session 文件
@@ -504,6 +573,13 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         result["reason"] = f"处理 session 文件: {os.path.basename(session_file)}"
         result["items_distilled"] = len(items)
         result["lines_written"] = lines_written
+        result["items"] = items  # 保存 items 用于生成摘要
+        
+        # 生成摘要
+        if items:
+            summary = self._generate_summary(items, lines_written)
+            result["summary"] = summary
+            print(summary)
 
         return result
 
@@ -661,12 +737,18 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                 print(f"[MemoryAutomation] [Manual] 检测到 session 切换: {old_session_key} -> {current_session_key}")
                 print(f"[MemoryAutomation] [Manual] 先处理旧 session 的未蒸馏消息...")
 
-                old_items_count, _ = self.process_old_session(
+                old_items_count, old_items = self.process_old_session(
                     old_session_key, old_last_msg_id
                 )
 
                 result["old_session_processed"] = True
                 result["old_session_items"] = old_items_count
+                
+                # 生成并打印旧 session 摘要
+                if old_items:
+                    old_summary = self._generate_summary(old_items, old_items_count * 7)  # 估算行数
+                    print("\n【旧 Session 处理结果】")
+                    print(old_summary)
         # ===== Session 切换处理结束 =====
 
         # 获取当前会话（只获取新消息）
@@ -708,6 +790,12 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                 "lines_written": lines_written,
                 "session_key": session_key
             })
+            
+            # 生成并打印摘要
+            if items:
+                summary = self._generate_summary(items, lines_written)
+                result["summary"] = summary
+                print(summary)
 
         return result
 
@@ -810,9 +898,13 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
                 result["old_session_processed"] = True
                 result["old_session_items"] = old_items_count
-
-                if old_items_count > 0:
+                
+                # 生成并打印旧 session 摘要
+                if old_items and old_items_count > 0:
                     print(f"[MemoryAutomation] [Heartbeat] 旧 session 处理完成: {old_items_count} 项已蒸馏")
+                    old_summary = self._generate_summary(old_items, old_items_count * 7)
+                    print("\n【旧 Session 处理结果】")
+                    print(old_summary)
                 else:
                     print(f"[MemoryAutomation] [Heartbeat] 旧 session 无遗漏消息或已全部处理")
         # ===== Session 切换处理结束 =====
@@ -855,6 +947,12 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                 "lines_written": lines_written,
                 "session_key": session_key
             })
+            
+            # 生成并打印摘要
+            if items:
+                summary = self._generate_summary(items, lines_written)
+                result["summary"] = summary
+                print(summary)
         
         # ===== 处理积压的历史 session =====
         # 如果活跃 session 没有新消息或处理完成，检查是否有积压
