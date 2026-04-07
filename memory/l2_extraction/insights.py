@@ -125,7 +125,7 @@ def get_insights(agent_id: str, status: str = None) -> list:
     current = {}
     
     for line in content.split("\n"):
-        if line.startswith("## ") and not line.startswith("## "):
+        if line.startswith("## "):
             if current:
                 results.append(current)
             current = {"title": line.replace("## ", "").strip()}

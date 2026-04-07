@@ -861,6 +861,77 @@ def _handle_l2_command(args: list) -> dict:
         return {"error": f"未知 L2 子命令: {subcmd}"}
 
 
+def _handle_l3_command(args: list) -> dict:
+    """
+    处理 L3 相关子命令 (L2→L3 提升)
+    
+    命令：
+      l3 promote --agent <id> [--dry-run]
+      l3 status --agent <id>
+    """
+    from .l3_writer import L3Writer
+    
+    if len(args) < 3:
+        print("L3 长期记忆命令：")
+        print("  l3 promote --agent <id> [--dry-run] - 将符合条件的 L2 提升到 L3")
+        print("  l3 status --agent <id> - 查看 L3 状态")
+        return {"error": "缺少子命令"}
+    
+    subcmd = args[2].lower()
+    
+    # 解析参数
+    agent_id = None
+    dry_run = False
+    
+    i = 3
+    while i < len(args):
+        if args[i] == "--agent" and i + 1 < len(args):
+            agent_id = args[i + 1]
+            i += 2
+        elif args[i] == "--dry-run":
+            dry_run = True
+            i += 1
+        else:
+            i += 1
+    
+    if not agent_id:
+        return {"error": "缺少 --agent 参数"}
+    
+    if subcmd == "promote":
+        writer = L3Writer(agent_id=agent_id)
+        result = writer.run_promotion(dry_run=dry_run)
+        return {
+            "success": True,
+            "action": "l3_promote",
+            "agent": agent_id,
+            "insights_promoted": result["insights_promoted"],
+            "patterns_promoted": result["patterns_promoted"],
+            "dry_run": dry_run
+        }
+    
+    elif subcmd == "status":
+        l3_path = Path(f"~/self-improving/memory.md").expanduser()
+        exists = l3_path.exists()
+        
+        print(f"\n[L3 Status] Agent: {agent_id}")
+        print(f"  L3 文件: {l3_path}")
+        print(f"  存在: {exists}")
+        
+        if exists:
+            content = l3_path.read_text(encoding='utf-8')
+            insights_count = content.count("### ")
+            print(f"  条目数: {insights_count}")
+        
+        return {
+            "success": True,
+            "l3_path": str(l3_path),
+            "exists": exists
+        }
+    
+    else:
+        return {"error": f"未知 L3 子命令: {subcmd}"}
+
+
 def main():
     """主入口函数"""
     if len(sys.argv) < 2:
@@ -871,10 +942,14 @@ def main():
         print("  heartbeat - Heartbeat 触发记忆蒸馏")
         print("  old-session <key> - 处理已 reset 的旧 session")
         print("")
-        print("L2 自我改进层（新增）：")
+        print("L2 自我改进层：")
         print("  l2 correct --agent <id> --content \"...\" - 添加纠正记录")
         print("  l2 process --agent <id> - 从 corrections 生成 patterns")
         print("  l2 status --agent <id> - 查看 L2 状态")
+        print("")
+        print("L3 长期记忆（新增）：")
+        print("  l3 promote --agent <id> [--dry-run] - 将 L2 提升到 L3")
+        print("  l3 status --agent <id> - 查看 L3 状态")
         print("")
         print("通用选项：")
         print("  --agent <id> - 指定 agent ID（必需）")
@@ -884,6 +959,7 @@ def main():
         print("  python -m memory.automation manual --agent code")
         print("  python -m memory.automation heartbeat --agent xiaoxian")
         print("  python -m memory.automation l2 correct --agent code --content \"纠正内容\" --source binary")
+        print("  python -m memory.automation l3 promote --agent code --dry-run")
         sys.exit(1)
 
     mode = sys.argv[1].lower()
@@ -891,6 +967,12 @@ def main():
     # L2 子命令处理
     if mode == "l2":
         result = _handle_l2_command(sys.argv)
+        print("\n" + json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result.get("success") else 1)
+    
+    # L3 子命令处理
+    if mode == "l3":
+        result = _handle_l3_command(sys.argv)
         print("\n" + json.dumps(result, ensure_ascii=False))
         sys.exit(0 if result.get("success") else 1)
 
@@ -948,7 +1030,7 @@ def main():
             print(f"\n[结果] {result['reason']}")
     else:
         print(f"错误: 未知模式 '{mode}'")
-        print("用法: python -m memory.automation [manual|heartbeat|l2]")
+        print("用法: python -m memory.automation [manual|heartbeat|l2|l3]")
         sys.exit(1)
 
     # 输出 JSON 结果（供调用方解析）

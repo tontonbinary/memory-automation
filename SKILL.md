@@ -43,14 +43,15 @@ entry_points:
 ┌─────────────────────────────────────────────────────────────┐
 │ L3: 长期记忆 (Long-term)                                     │
 │    ~/self-improving/memory.md                               │
-│    - verified insights (已验证的原则)                        │
+│    - Verified Insights (已验证的原则)                        │
+│    - Consolidated Patterns (稳定的行为模式)                   │
 │    - 跨 session 的持久知识                                   │
 ├─────────────────────────────────────────────────────────────┤
 │ L2: 自我改进层 (Self-improving)                              │
 │    ~/.openclaw/workspaces/{agent}/workspace/memory/L2/      │
 │    - corrections.md: 被纠正的记录 (L0→L2 实时)                │
-│    - patterns.md: 聚合的行为模式                              │
-│    - insights.md: 提炼的洞察/原则                             │
+│    - patterns.md: 聚合的行为模式 (L1→L2 定期)                 │
+│    - insights.md: 提炼的洞察/原则 (L2→L3 候选)                │
 ├─────────────────────────────────────────────────────────────┤
 │ L1: 每日日志 (Daily Log)                                     │
 │    ~/.openclaw/workspaces/{agent}/workspace/memory/YYYY-MM-DD.md
@@ -61,6 +62,12 @@ entry_points:
 │    ~/.openclaw/agents/{agent}/sessions/*.jsonl              │
 │    - 原始对话记录                                            │
 └─────────────────────────────────────────────────────────────┘
+
+流转路径：
+  L0 → L1: 手动/Heartbeat 蒸馏
+  L0 → L2: 实时纠正
+  L1 → L2: 标签提升 / patterns 聚合
+  L2 → L3: 定期提升 (verified insights / 稳定 patterns)
 ```
 
 ## 功能模块
@@ -160,16 +167,43 @@ python3 -m memory.automation l2 correct \
 python3 -m memory.automation l2 process --agent <agent_id>
 ```
 
-**L1→L2 提升入口（预留）：**
+**L1→L2 提升入口：**
 ```bash
 # 从 L1 标签提升符合条件的到 patterns.md
-# 注：当前为简化实现，完整提升规则需后续重写
 python3 -m memory.l1_to_l2 --agent <agent_id> --days 7 --min 3
 ```
 
 **查看 L2 状态：**
 ```bash
 python3 -m memory.automation l2 status --agent <agent_id>
+```
+
+### L3 命令（新增）
+
+**L2→L3 提升（长期记忆）：**
+```bash
+# 将符合条件的 L2 提升到 L3
+python3 -m memory.automation l3 promote --agent <agent_id>
+
+# 模拟运行（不实际写入）
+python3 -m memory.automation l3 promote --agent <agent_id> --dry-run
+```
+
+**查看 L3 状态：**
+```bash
+python3 -m memory.automation l3 status --agent <agent_id>
+```
+
+**L3 升级规则：**
+
+| 来源 | 条件 | 目标 |
+|------|------|------|
+| insights.md (verified) | status=verified, >=7天 | L3 Verified Insights |
+| patterns.md | count>=5, >=30天 | L3 Consolidated Patterns |
+
+**L3 存储位置：**
+```
+~/self-improving/memory.md
 ```
 
 ### Python API

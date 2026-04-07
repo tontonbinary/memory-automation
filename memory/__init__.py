@@ -27,6 +27,9 @@ from .l2_extraction import (
     L2_DIR, CORRECTIONS_FILE, PATTERNS_FILE, INSIGHTS_FILE
 )
 
+# L3 模块（L2→L3 提升）
+from .l3_writer import L3Writer
+
 __all__ = [
     # 核心
     "SessionManager",
@@ -49,4 +52,6 @@ __all__ = [
     "CORRECTIONS_FILE",
     "PATTERNS_FILE",
     "INSIGHTS_FILE",
+    # L3 长期记忆
+    "L3Writer",
 ]

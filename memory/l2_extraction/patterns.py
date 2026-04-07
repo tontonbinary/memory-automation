@@ -117,7 +117,7 @@ def get_patterns(agent_id: str) -> list:
     current = {}
     
     for line in content.split("\n"):
-        if line.startswith("## ") and not line.startswith("## "):
+        if line.startswith("## "):
             if current:
                 results.append(current)
             current = {"key": line.replace("## ", "").strip()}

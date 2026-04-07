@@ -11,9 +11,14 @@ L2 统一架构：
 
 __version__ = "1.0.0"
 
-from .corrections import add_correction, get_corrections
-from .patterns import add_or_update_pattern, get_patterns, process_patterns_from_corrections
-from .insights import add_insight, update_insight_status, get_insights
+from .corrections import add_correction, get_corrections, get_l2_dir as _get_corrections_dir
+from .patterns import add_or_update_pattern, get_patterns, process_patterns_from_corrections, get_l2_dir as _get_patterns_dir
+from .insights import add_insight, update_insight_status, get_insights, get_l2_dir as _get_insights_dir
+
+# 统一的 L2 目录获取函数
+def get_l2_dir(agent_id: str) -> str:
+    """获取指定 agent 的 L2 目录路径"""
+    return _get_corrections_dir(agent_id)
 
 # L2 存储路径（与 memory-automation 统一）
 L2_DIR = "~/.openclaw/workspaces/{agent_id}/workspace/memory/L2"
