@@ -2,234 +2,245 @@
 name: memory-automation
 type: public  # 公用 skill（所有 agent 可用）
 description: |
-  分层记忆管理 Skill，实现 L0→L1→L2→L3 的完整记忆流转。
-  
-  四层架构：
-  - L0: Session 原始记录
-  - L1: 每日日志（Event/Decision/Preference/Improve/To-do/Output/Emotion）
-  - L2: 自我改进层（corrections → patterns → insights）
-  - L3: 长期记忆（verified insights）
-  
-  支持手动触发、Heartbeat 自动触发、L2 实时纠正。
-  注意：每次调用必须指定 --agent 参数。
-  静默时段（03:55-04:10）手动和自动触发均跳过。
+  记忆自动化 Skill，实现会话内容的智能蒸馏与持久化存储。
+  支持手动触发（关键词"记住""记忆"）和 Heartbeat 自动触发（每30分钟）。
+  注意：每次调用必须指定 --agent 参数，指定当前 agent 的 ID。
 triggers:
   manual:
     - keywords: ["记住", "记忆", "distill", "distillation"]
       condition: "用户消息包含上述关键词"
   heartbeat:
-    - interval: "6h"
-      condition: "session_key 变化 或 距离上次处理超过6小时"
+    - interval: "30m"
+      condition: "session_key 变化 或 距离上次处理超过30分钟"
 config:
   agent_id: "code"
   trigger_keywords: ["记住", "记忆", "distill", "distillation"]
-  heartbeat_interval_minutes: 360
+  heartbeat_interval_minutes: 30
   l1_path_template: "~/.openclaw/workspaces/{agent}/workspace/memory/YYYY-MM-DD.md"
-  l2_dir: "~/.openclaw/workspaces/{agent}/workspace/memory/L2"
   state_file: "memory/heartbeat-state.json"
   memory_rules: "~/.openclaw/memory-rules.md"
 entry_points:
   manual: "memory/automation.py"
   heartbeat: "memory/automation.py"
   old-session: "memory/automation.py"
-  l2: "memory/automation.py"
 ---
 
 # Memory Automation Skill
 
-## 分层架构
+## 功能
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ L3: 长期记忆 (Long-term)                                     │
-│    ~/self-improving/memory.md                               │
-│    - Verified Insights (已验证的原则)                        │
-│    - Consolidated Patterns (稳定的行为模式)                   │
-│    - 跨 session 的持久知识                                   │
-├─────────────────────────────────────────────────────────────┤
-│ L2: 自我改进层 (Self-improving)                              │
-│    ~/.openclaw/workspaces/{agent}/workspace/memory/L2/      │
-│    - corrections.md: 被纠正的记录 (L0→L2 实时)                │
-│    - patterns.md: 聚合的行为模式 (L1→L2 定期)                 │
-│    - insights.md: 提炼的洞察/原则 (L2→L3 候选)                │
-├─────────────────────────────────────────────────────────────┤
-│ L1: 每日日志 (Daily Log)                                     │
-│    ~/.openclaw/workspaces/{agent}/workspace/memory/YYYY-MM-DD.md
-│    - Event/Decision/Preference/Improve/To-do/Output/Emotion │
-│    - 通过 L1→L2 提升进入改进层                                │
-├─────────────────────────────────────────────────────────────┤
-│ L0: Session 记录 (Raw)                                       │
-│    ~/.openclaw/agents/{agent}/sessions/*.jsonl              │
-│    - 原始对话记录                                            │
-└─────────────────────────────────────────────────────────────┘
+1. **手动记忆**：用户说"记住"或"记忆"时，自动蒸馏当前会话内容并写入 L1 存储
+2. **自动记忆**：每30分钟检测会话变化，自动处理并记录
 
-流转路径：
-  L0 → L1: 手动/Heartbeat 蒸馏
-  L0 → L2: 实时纠正
-  L1 → L2: 标签提升 / patterns 聚合
-  L2 → L3: 定期提升 (verified insights / 稳定 patterns)
+## 调用方式
+
+### 命令行参数
+
+```bash
+# 手动触发
+python3 -m memory.automation manual --agent <agent_id>
+
+# 心跳触发
+python3 -m memory.automation heartbeat --agent <agent_id>
 ```
 
-## 功能模块
+### HEARTBEAT 配置
 
-### L1 记忆管理（原有）
+每个 agent 的 HEARTBEAT.md 必须包含 --agent 参数：
 
-**触发方式：**
-1. **手动触发**：用户说"记住"、"记忆"等关键词
-2. **Heartbeat 触发**：每6小时自动检测
+```bash
+# 示例：code agent 的 HEARTBEAT.md
+cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbeat --agent code
+```
 
-**存储格式：**
+### agent_id 说明
+
+| agent | agent_id |
+|-------|----------|
+| code | code |
+| xiaoxian | xiaoxian |
+| TS | TS |
+
+## 目录结构
+
 ```markdown
+## {时间戳}
+### {事件类型}
+- **内容**：{提炼内容}
+- **情绪**：{情绪}
+- **后续行动**：{行动}
+- **标签**：`#{标签1} #{标签2}`
+- **来源**：memory/YYYY-MM-DD.md#L行号
+```
+
+## 提取类型
+
+- **event**：事件（"创建了"、"完成了"、"修复了"）
+- **decision**：决策（"决定"、"确认"、"采用"）
+- **preference**：偏好（"我喜欢"、"我偏好"、"我想要"）
+- **emotion**：情绪（"好的"、"感谢"、"太棒了"）
+- **action**：行动（"去做"、"开始"、"下一步"）
+
+## 首次激活流程
+
+当用户说"请使用 memory-automation"时：
+
+1. **系统自动提取** → 尝试从 OpenClaw 配置 (`~/.openclaw/agents/{agent}/agent/auth-profiles.json`) 自动提取 API key
+2. **提取成功** → 立即开始使用 LLM 蒸馏，无需用户干预
+3. **提取失败** → 脚本输出详细的配置指导，Agent 协助用户手动配置
+
+### API Key 获取优先级
+
+系统按以下顺序尝试获取 API key：
+
+| 优先级 | 来源 | 说明 |
+|--------|------|------|
+| 1 | 环境变量 | `MINIMAX_API_KEY` 或 `MINIMAX_API_TOKEN` |
+| 2 | config.json | `~/.openclaw/skills/memory-automation/config.json` |
+| 3 | OpenClaw 配置 | `~/.openclaw/agents/{agent}/agent/auth-profiles.json` |
+
+### 配置失败时的补救措施
+
+如果自动提取失败，脚本会输出以下配置选项：
+
+```
+[MemoryAutomation] ❌ 需要配置 api_key
+
+系统已尝试自动提取但未成功。请通过以下方式之一手动配置：
+
+方法 1: 环境变量（推荐，立即生效）
+  export MINIMAX_API_KEY="your-api-key"
+
+方法 2: 配置文件
+  创建或编辑：~/.openclaw/skills/memory-automation/config.json
+  
+  内容格式：
+  {
+    "llm": {
+      "api_key": "your-api-key",
+      "provider": "minimax",
+      "model": "MiniMax-Text-01"
+    }
+  }
+
+方法 3: OpenClaw 默认配置
+  确保以下文件存在且包含有效 key：
+  ~/.openclaw/agents/{agent_id}/agent/auth-profiles.json
+```
+
+### 无需配置即可使用（已废弃）
+
+~~原设计支持 regex 蒸馏作为 fallback，无需 API key 也能使用。~~
+
+**v2.0 起已移除 regex 蒸馏**。原因：
+- 效果远不如 LLM 蒸馏（质量差距大）
+- 增加代码复杂度
+- 用户反馈更倾向于"要么用好，要么不用"
+
+**现在：API key 是必需的**。如果没有配置，系统会：
+1. 返回清晰的错误信息
+2. 提供详细的配置指导
+3. 等待用户配置完成后再次尝试
+
+## 蒸馏模式
+
+| 模式 | 触发条件 | 需要 API key |
+|------|----------|-------------|
+| LLM 蒸馏 | API key 可用 | ✅ |
+| ~~Regex 蒸馏~~ | ~~v2.0 已移除~~ | ❌ |
+
+- 每次 heartbeat 检查 api_key
+- API 失败时**不再 fallback**，返回错误并提示用户
+          2）提供更好的蒸馏关键词/标签"
+
+## 配置管理
+
+### API Key 管理
+- key 存储在 `config.json` 的 `llm.api_key`
+- 用户可通过提供新 key 来更新
+- Agent 发现 key 失效时：
+  - 脚本输出 `[MEMORY-AUTOMATION] API_ERROR: API_KEY_INVALID`
+  - Agent 通知用户并询问是否更新
+
+### Agent 询问用户时的标准话术
+
+**首次询问 API key：**
+```
+memory-automation 需要配置以下信息：
+1. API key（从哪里获取？）
+2. 供应商（默认 minimax）
+3. 模型（默认 MiniMax-M2.7）
+
+如暂不提供，将使用 regex 蒸馏（效果较差）。
+```
+
+**Regex 30 次询问：**
+```
+你已经使用 regex 蒸馏 30 次了，效果如何？
+是否要：
+1）提供 API key 升级到 LLM 蒸馏
+2）提供更好的蒸馏关键词/标签
+```
+
+**API 错误询问：**
+```
+memory-automation 的 API key 已失效或配置有误。
+请检查或提供新的 API key。
+```
+
+### 用户可以随时：
+- 提供/更新 API key → Agent 写入 config.json
+- 更换供应商/模型 → Agent 更新 config.json
+
+### 当用户询问时：
+- Agent 检查 config.json 当前配置
+- 告知用户当前状态
+- 根据用户需求更新
+
+## L1 记忆存储格式
+
+### L1 索引（双索引：时间 + 记忆标签）
+
+```
 | 时间 | 记忆标签 | 事件类型 | 内容标签 |
 |------|----------|----------|----------|
 | 14:30 | Decision | CoreWork | #feature #coding |
 ```
 
-### L2 自我改进层（新增整合）
+**字段说明：**
+- **时间**：HH:MM（UTC 原始时间）
+- **记忆标签**：7类记忆类型（Event/Decision/Preference/Improve/To-do/Output/Emotion）
+- **事件类型**：5类事件类型（CoreWork/CollabResult/AuxTask/SelfEvolve/EnvAwareness）
+- **内容标签**：#tag1 #tag2（具体内容标签）
 
-**数据来源：**
-- **实时（L0→L2）**：被纠正时立即写入 corrections.md
-- **定期（L1→L2）**：从 L1 扫描生成 patterns 和 insights
+### L1 完整日志
 
-**统一三文件结构（写入规则）：**
-
-| 文件 | 层级 | 何时写入 | 写入者 | 内容示例 |
-|------|------|---------|--------|---------|
-| `corrections.md` | 底层 | **实时**：Agent 被用户纠正时 | Agent 自己或脚本 | 用户说"不对，应该用..." |
-| `patterns.md` | 中层 | **定期**：① corrections 聚合<br>② L1 标签提升 | 定期脚本 | "用户偏好先讨论架构再写代码" |
-| `insights.md` | 顶层 | **验证后**：patterns 提炼为原则 | Agent（人工确认） | "优先澄清需求再出方案" |
-
-**Agent 写入决策流程：**
-
-```
-被用户纠正？
-  └─ 是 → 立即写入 corrections.md
-  
-发现了重复行为模式？
-  └─ 是 → 写入/更新 patterns.md
-  
-模式已验证为长期原则？
-  └─ 是 → 写入 insights.md（status=verified）
+```markdown
+## HH:MM
+### Event
+- **内容**：记忆内容摘要
+- **标签**：`#{标签1} #{标签2}`
+- **来源**：session/03-26#L行号
 ```
 
-**写入方式：**
+### 记忆检索流程（Agent 调用时）
 
-```python
-# Python API - 根据内容类型选择对应文件
-from memory.l2_extraction import add_correction, add_or_update_pattern, add_insight
+当 Agent 需要调用记忆时：
 
-# 实时纠正 → corrections.md
-add_correction(agent_id='code', content='被纠正的内容', source='binary')
+1. **匹配 L1/L2 标签索引**
+   - 在上下文中识别关键词（如 #feature、#bug、#decision）
+   - 通过「时间 + 记忆标签」双索引定位相关 L1 条目
 
-# 模式识别 → patterns.md（Agent 或系统自动）
-add_or_update_pattern(agent_id='code', 
-                      pattern_key='discussion-order',
-                      description='讨论顺序偏好',
-                      examples=['示例1', '示例2'])
+2. **获取 L1 条目内容**
+   - 根据 L1 条目中的「来源」字段定位 session 内容
+   - 或直接读取 L1 完整日志中的内容
 
-# 洞察提炼 → insights.md（需验证后）
-add_insight(agent_id='code',
-            title='优先澄清需求',
-            principle='在给出方案前，先确认用户真实需求',
-            status='verified')
-```
-
-## 调用方式
-
-### L1 命令
-
-```bash
-# 手动触发记忆蒸馏
-python3 -m memory.automation manual --agent <agent_id>
-
-# Heartbeat 触发
-python3 -m memory.automation heartbeat --agent <agent_id>
-
-# 处理旧 session
-python3 -m memory.automation old-session <session_key> --agent <agent_id>
-```
-
-### L2 命令
-
-**实时写入（L0→L2）：**
-```bash
-# 添加纠正记录 → corrections.md
-python3 -m memory.automation l2 correct \
-    --agent <agent_id> \
-    --content "被纠正的具体内容" \
-    --source binary \
-    --context "场景上下文"
-```
-
-**定期处理（Corrections→Patterns）：**
-```bash
-# 从 corrections 聚合生成 patterns → patterns.md
-python3 -m memory.automation l2 process --agent <agent_id>
-```
-
-**L1→L2 提升入口：**
-```bash
-# 从 L1 标签提升符合条件的到 patterns.md
-python3 -m memory.l1_to_l2 --agent <agent_id> --days 7 --min 3
-```
-
-**查看 L2 状态：**
-```bash
-python3 -m memory.automation l2 status --agent <agent_id>
-```
-
-### L3 命令（新增）
-
-**L2→L3 提升（长期记忆）：**
-```bash
-# 将符合条件的 L2 提升到 L3
-python3 -m memory.automation l3 promote --agent <agent_id>
-
-# 模拟运行（不实际写入）
-python3 -m memory.automation l3 promote --agent <agent_id> --dry-run
-```
-
-**查看 L3 状态：**
-```bash
-python3 -m memory.automation l3 status --agent <agent_id>
-```
-
-**L3 升级规则：**
-
-| 来源 | 条件 | 目标 |
-|------|------|------|
-| insights.md (verified) | status=verified, >=7天 | L3 Verified Insights |
-| patterns.md | count>=5, >=30天 | L3 Consolidated Patterns |
-
-**L3 存储位置：**
-```
-~/self-improving/memory.md
-```
-
-### Python API
-
-```python
-from memory import MemoryAutomation
-
-# L1 自动蒸馏
-auto = MemoryAutomation(agent_id="code")
-auto.run_manual()
-
-# L2 实时纠正（从 l2_extraction 导入）
-from memory.l2_extraction import add_correction
-add_correction(
-    agent_id="code",
-    content="被纠正的内容",
-    source="binary",
-    context="场景上下文"
-)
-```
-
-## 静默时段
-
-自动蒸馏会在 **03:55 - 04:10** 跳过（避免与 Auto-Dream 等其他定时任务冲突）。
-
-## L1 记忆存储格式
+3. **L1 → L2 升级依据**
+   - 核心依据：**事件类型 + 内容标签**
+   - 当 L1 条目同时满足：
+     - 事件类型（如 CoreWork/SelfEvolve）
+     - 内容标签达到升级阈值
+   - 则升级到 L2
 
 ### 7类记忆类型
 
@@ -252,167 +263,3 @@ add_correction(
 | AuxTask | 临时辅助、无重要成果的事务 |
 | SelfEvolve | 知识、纠错、规则、红线 |
 | EnvAwareness | 用户、系统、分工、规律 |
-
-## L2 文件格式
-
-### corrections.md
-```markdown
-# Corrections
-
-## 2026-04-07 15:30
-**来源**: binary
-**内容**: 被纠正的具体内容
-**上下文**: 场景上下文
----
-```
-
-### patterns.md
-```markdown
-# Patterns
-
-## discussion-order
-**Description**: 讨论顺序模式
-**Count**: 3
-**Created**: 2026-04-07 15:30
-**Updated**: 2026-04-07 15:30
-
-**Examples**:
-- 示例1
-```
-
-### insights.md
-```markdown
-# Insights
-
-## 优先澄清需求
-**Principle**: 在给出方案前，先确认用户真实需求
-**Status**: verified
-**Created**: 2026-04-07 15:30
-**Updated**: 2026-04-07 15:30
-```
-
-## 与 l2-extraction 的关系
-
-**历史**：`l2-extraction` 曾是独立的 skill，现已整合为 `memory-automation` 的子模块。
-
-**整合方式**：
-- 原 `l2-extraction/l2_extraction/` → `memory-automation/memory/l2_extraction/`
-- 原独立 CLI → 统一入口 `python -m memory.automation l2 ...`
-- 统一的四层架构定义
-
-## 配置管理
-
-### API Key 管理
-
-#### 自动提取（推荐）
-
-memory-automation 会自动从 OpenClaw 配置提取 API key：
-1. 检查 `~/.openclaw/agents/{agent}/agent/auth-profiles.json` 中的 minimax 配置
-2. 遍历常用 agent（xiaoxian, code, main, TS）查找可用 key
-3. 自动提取的 key 立即可用，无需手动配置
-
-#### 手动配置
-
-如需手动配置或覆盖自动提取：
-
-**方式 1：修改 config.json**
-```json
-{
-  "llm": {
-    "api_key": "your-api-key-here"
-  }
-}
-```
-
-**方式 2：环境变量**
-```bash
-export MINIMAX_API_KEY="your-api-key"
-```
-
-### Agent 询问用户时的标准话术
-
-**首次激活时：**
-```
-memory-automation 正在尝试自动配置...
-✓ 已从 OpenClaw 配置提取 API key（或：✗ 未找到 API key，需要手动配置）
-
-如需更换 API key：
-1. 提供新的 API key
-2. 指定供应商（默认 minimax）
-3. 指定模型（默认 MiniMax-M2.7）
-```
-
-**API 错误时：**
-```
-memory-automation 的 API key 已失效或配置有误。
-请检查或提供新的 API key。
-```
-
-## HEARTBEAT 配置
-
-每个 agent 的 HEARTBEAT.md 必须包含 --agent 参数：
-
-```bash
-# 示例：code agent 的 HEARTBEAT.md
-cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbeat --agent code
-```
-
-### agent_id 说明
-
-| agent | agent_id |
-|-------|----------|
-| code | code |
-| xiaoxian | xiaoxian |
-| TS | TS |
-
-## 首次激活流程
-
-当用户说"请使用 memory-automation"时：
-
-### 步骤 1：系统自动配置
-```
-[MemoryAutomation] 正在尝试自动配置...
-[SessionDistiller] 已从 OpenClaw (xiaoxian/minimax-portal:default) 提取 API key
-[MemoryAutomation] 配置就绪 (API key 来源: openclaw_default)
-```
-
-系统会自动尝试以下方式获取 API key：
-1. **环境变量** (`MINIMAX_API_KEY` 或 `MINIMAX_API_TOKEN`)
-2. **config.json** 中的 `llm.api_key`
-3. **OpenClaw 默认配置** (`~/.openclaw/agents/{agent}/agent/auth-profiles.json`)
-
-### 步骤 2：自动运行
-如果自动提取成功，系统直接开始蒸馏，**无需用户交互**。
-
-### 步骤 3：手动配置（仅在自动提取失败时）
-
-如果系统提示：
-```
-[MEMORY-AUTOMATION] API_KEY_NOT_CONFIGURED
-[SessionDistiller] 请先配置 LLM API key
-```
-
-用户需要手动配置：
-
-**方式 1：设置环境变量**
-```bash
-export MINIMAX_API_KEY="sk-xxx"
-```
-
-**方式 2：修改 config.json**
-```json
-{
-  "llm": {
-    "api_key": "sk-xxx"
-  }
-}
-```
-
-**方式 3：配置 OpenClaw 默认模型**
-确保 `~/.openclaw/agents/{agent}/agent/auth-profiles.json` 中有有效的 minimax 配置。
-
-### 注意事项
-
-- 从 v2.2.0 起，**移除了 Regex 降级功能**
-- LLM 蒸馏失败时将返回空结果
-- 系统会自动检测并提示 API key 问题

@@ -261,13 +261,61 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                 "message": f"配置就绪 (API key 来源: {status_detail.get('api_key_source', 'unknown')})"
             }
 
-        # API key 不可用
+        # API key 不可用 - 提供详细的补救指导
         missing_str = ", ".join(missing)
+        agent_id = self.agent_id or "{agent_id}"
+        
+        # 使用字符串拼接避免 f-string 中 JSON 大括号的问题
+        config_json_example = '''{
+    "llm": {
+      "api_key": "your-api-key",
+      "provider": "minimax",
+      "model": "MiniMax-Text-01"
+    }
+  }'''
+        
+        auth_profiles_example = '''{
+    "profiles": {
+      "minimax-portal:default": {
+        "type": "oauth",
+        "access": "your-api-key"
+      }
+    }
+  }'''
+        
+        help_message = f"""[MemoryAutomation] ❌ 需要配置 {missing_str}
+
+系统已尝试自动提取但未成功。请通过以下方式之一手动配置：
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+方法 1: 环境变量（推荐，立即生效）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  export MINIMAX_API_KEY="your-api-key"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+方法 2: 配置文件
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  创建或编辑：~/.openclaw/skills/memory-automation/config.json
+  
+  内容格式：
+  {config_json_example}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+方法 3: OpenClaw 默认配置
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  确保以下文件存在且包含有效 key：
+  ~/.openclaw/agents/{agent_id}/agent/auth-profiles.json
+
+  格式示例：
+  {auth_profiles_example}
+
+详细文档：https://gitcode.com/Binary_Wu/Mauto/blob/main/README.md"""
+
         return {
             "ready": False,
             "status": "api_key_required",
             "config_status": status_detail,
-            "message": f"需要配置 {missing_str}。系统已尝试自动提取但未成功，请手动配置。"
+            "message": help_message
         }
 
     def write_activation_flag(self, message: str = "Mauto 需要激活，请运行 'mauto activate' 或让用户触发一次 Mauto") -> Path:
