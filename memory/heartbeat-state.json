@@ -1,9 +1,9 @@
 {
-  "last_session_key": "agent:code:feishu:direct:ou_83d6abde1b37e26ebac7059a9bc12da3",
-  "last_processed_time": "2026-04-03T13:16:59.988167",
-  "last_distilled_messages": 16,
+  "last_session_key": "agent:mautoer:feishu:direct:ou_83d6abde1b37e26ebac7059a9bc12da3",
+  "last_processed_time": "2026-04-08T01:04:04.350793",
+  "last_distilled_messages": 2,
   "version": "1.0.0",
-  "last_processed_msg_id": "0bba430f",
+  "last_processed_msg_id": "5d13ec2a",
   "pending_queue": [],
   "processing_old_session_key": null,
   "processing_old_session_started_at": null,

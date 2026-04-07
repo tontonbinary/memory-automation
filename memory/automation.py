@@ -23,6 +23,7 @@ from .pattern_detector import PatternDetector
 from .session_distiller import SessionDistiller
 from .l1_writer import L1Writer
 from .reference_manager import ReferenceManager
+from .processed_sessions_tracker import ProcessedSessionsTracker
 
 
 class MemoryAutomation:
@@ -854,8 +855,171 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                 "lines_written": lines_written,
                 "session_key": session_key
             })
-
+        
+        # ===== 处理积压的历史 session =====
+        # 如果活跃 session 没有新消息或处理完成，检查是否有积压
+        if not messages or (lines_written == 0 and len(items) == 0):
+            print("[MemoryAutomation] [Heartbeat] 活跃 session 无新内容，检查积压...")
+            backlog_result = self._check_and_process_backlog()
+            if backlog_result:
+                result["backlog_processed"] = backlog_result
+        
         return result
+
+    def run_process_backlog(self, max_sessions: int = 1, force: bool = False) -> Dict[str, Any]:
+        """
+        处理积压的历史 session
+        
+        策略：
+        1. 扫描 sessions 目录
+        2. 筛选未处理且符合策略的 session
+        3. 逐个处理
+        
+        Args:
+            max_sessions: 本次最多处理几个 session（默认 1，避免一次处理太多）
+            force: 是否忽略时间/大小限制强制处理
+        
+        Returns:
+            处理结果
+        """
+        result = {
+            "processed": [],
+            "skipped": [],
+            "errors": [],
+            "total_found": 0
+        }
+        
+        if not self.agent_id:
+            result["errors"].append("agent_id 未指定")
+            return result
+        
+        # 检查配置
+        config_status = self._check_config_status()
+        if not config_status["ready"]:
+            result["errors"].append(f"配置未就绪: {config_status['message']}")
+            return result
+        
+        # 获取策略配置
+        backlog_config = self.config.get("session_processing", {})
+        policy = {
+            "max_age_days": backlog_config.get("max_age_days", 3),
+            "min_message_count": backlog_config.get("min_message_count", 50),
+            "process_order": backlog_config.get("process_order", "newest_first")
+        }
+        
+        if force:
+            # 强制模式：放宽限制
+            policy["max_age_days"] = 365  # 一年
+            policy["min_message_count"] = 1  # 任何大小
+        
+        # 初始化 tracker
+        tracker = ProcessedSessionsTracker(self.agent_id, self.config)
+        
+        # 获取 sessions 目录
+        sessions_dir = self.session_manager._get_sessions_dir()
+        
+        print(f"[MemoryAutomation] [Backlog] 扫描目录: {sessions_dir}")
+        print(f"[MemoryAutomation] [Backlog] 策略: 最大{policy['max_age_days']}天, 最少{policy['min_message_count']}条消息")
+        
+        # 获取未处理的 session
+        unprocessed = tracker.get_unprocessed_sessions(sessions_dir)
+        result["total_found"] = len(unprocessed)
+        
+        print(f"[MemoryAutomation] [Backlog] 发现 {len(unprocessed)} 个未处理文件")
+        
+        if not unprocessed:
+            print("[MemoryAutomation] [Backlog] 没有需要处理的 session")
+            return result
+        
+        # 应用策略筛选
+        filtered = tracker.filter_sessions_by_policy(unprocessed, policy)
+        
+        # 处理应该跳过的
+        for file_path, file_info, decision in filtered:
+            if decision != "process":
+                session_key = str(file_path)
+                skip_reason = {
+                    "skip_too_old": "文件太旧",
+                    "skip_too_small": "消息太少",
+                    "skip_other": "其他原因"
+                }.get(decision, "未知原因")
+                
+                tracker.mark_skipped(session_key, file_path, skip_reason, file_info)
+                result["skipped"].append({
+                    "file": str(file_path),
+                    "reason": skip_reason,
+                    "lines": file_info.get("line_count", 0)
+                })
+                print(f"[MemoryAutomation] [Backlog] 跳过: {file_path.name} ({skip_reason})")
+        
+        # 处理应该处理的
+        processed_count = 0
+        for file_path, file_info, decision in filtered:
+            if decision != "process":
+                continue
+            
+            if processed_count >= max_sessions:
+                print(f"[MemoryAutomation] [Backlog] 已达到最大处理数量 ({max_sessions})，剩余待下次处理")
+                break
+            
+            session_key = str(file_path)
+            print(f"[MemoryAutomation] [Backlog] 处理: {file_path.name} ({file_info.get('line_count', 0)} 条消息)")
+            
+            try:
+                # 调用 process_session_file 处理
+                process_result = self._process_session_file(file_path)
+                
+                if process_result.get("triggered"):
+                    tracker.mark_processed(
+                        session_key, 
+                        file_path,
+                        process_result.get("items_distilled", 0),
+                        process_result.get("lines_written", 0)
+                    )
+                    result["processed"].append({
+                        "file": str(file_path),
+                        "items": process_result.get("items_distilled", 0),
+                        "lines": process_result.get("lines_written", 0)
+                    })
+                    processed_count += 1
+                    print(f"[MemoryAutomation] [Backlog] ✓ 完成: {process_result.get('items_distilled', 0)} 项记忆")
+                else:
+                    error_msg = process_result.get("reason", "未知错误")
+                    tracker.mark_skipped(session_key, file_path, f"处理失败: {error_msg}")
+                    result["errors"].append({
+                        "file": str(file_path),
+                        "error": error_msg
+                    })
+                    
+            except Exception as e:
+                tracker.mark_skipped(session_key, file_path, f"异常: {str(e)}")
+                result["errors"].append({
+                    "file": str(file_path),
+                    "error": str(e)
+                })
+                print(f"[MemoryAutomation] [Backlog] ✗ 错误: {e}")
+        
+        # 输出统计
+        stats = tracker.get_stats()
+        print(f"[MemoryAutomation] [Backlog] 统计: 已处理 {stats['processed_count']}, 已跳过 {stats['skipped_count']}")
+        
+        return result
+
+    def _check_and_process_backlog(self) -> Dict[str, Any]:
+        """
+        Heartbeat 中检查并处理积压 session（处理 1 个）
+        
+        Returns:
+            处理结果，如果没有处理则返回空 dict
+        """
+        # 检查配置是否启用
+        backlog_config = self.config.get("session_processing", {})
+        if not backlog_config.get("process_inactive", True):
+            return {}
+        
+        # 只在活跃 session 没有新消息时处理积压
+        # 这里直接调用 run_process_backlog 处理 1 个
+        return self.run_process_backlog(max_sessions=1, force=False)
 
 
 def _handle_l2_command(args: list) -> dict:
@@ -1106,9 +1270,42 @@ def main():
             print(f"请检查 memory/pending_queue.json 并进行 LLM 蒸馏")
         else:
             print(f"\n[结果] {result['reason']}")
+    
+    elif mode == "process-backlog":
+        # 处理积压的历史 session
+        max_sessions = 1
+        force = False
+        
+        # 解析参数
+        i = 2
+        while i < len(sys.argv):
+            if sys.argv[i] == "--max" and i + 1 < len(sys.argv):
+                max_sessions = int(sys.argv[i + 1])
+                i += 2
+            elif sys.argv[i] == "--force":
+                force = True
+                i += 1
+            elif sys.argv[i] == "--agent" and i + 1 < len(sys.argv):
+                i += 2
+            else:
+                i += 1
+        
+        print(f"[MemoryAutomation] [Backlog] 批量处理积压 session (max={max_sessions}, force={force})")
+        result = automation.run_process_backlog(max_sessions=max_sessions, force=force)
+        
+        processed = len(result.get("processed", []))
+        skipped = len(result.get("skipped", []))
+        errors = len(result.get("errors", []))
+        
+        print(f"\n[结果] 处理完成: {processed} 成功, {skipped} 跳过, {errors} 错误")
+        if result.get("processed"):
+            print("已处理文件:")
+            for item in result["processed"]:
+                print(f"  ✓ {item['file']} ({item['items']} 项记忆)")
+    
     else:
         print(f"错误: 未知模式 '{mode}'")
-        print("用法: python -m memory.automation [manual|heartbeat|l2|l3]")
+        print("用法: python -m memory.automation [manual|heartbeat|l2|l3|process-backlog]")
         sys.exit(1)
 
     # 输出 JSON 结果（供调用方解析）

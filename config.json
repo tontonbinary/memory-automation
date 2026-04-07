@@ -74,7 +74,8 @@
       "action"
     ],
     "max_messages_per_distill": 50,
-    "min_message_length": 10
+    "min_message_length": 10,
+    "max_messages_per_chunk": 200
   },
   "llm": {
     "enabled": true,
@@ -105,5 +106,18 @@
   "fallback_to_regex": true,
   "entry_point": "memory/automation.py",
   "agent_self_distill": true,
-  "l1_template": "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md"
+  "l1_template": "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md",
+  "output": {
+    "l1_dir": "/Users/binary/mauto-test/test_output/L1",
+    "l2_dir": "/Users/binary/mauto-test/test_output/L2",
+    "l3_dir": "/Users/binary/mauto-test/test_output/L3",
+    "clean_session_dir": "/Users/binary/mauto-test/test_output/clean_session",
+    "l1_template": "/Users/binary/mauto-test/test_output/L1/{date}.md"
+  },
+  "session_processing": {
+    "process_inactive": true,
+    "max_age_days": 3,
+    "min_message_count": 50,
+    "process_order": "newest_first"
+  }
 }
