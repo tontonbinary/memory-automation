@@ -226,13 +226,13 @@ memory-automation 的 API key 已失效或配置有误。
 ```
 | 时间 | 记忆标签 | 事件类型 | 内容标签 |
 |------|----------|----------|----------|
-| 14:30 | Decision | CoreWork | #feature #coding |
+| 14:30 | Event | CoreWork | #feature #coding |
 ```
 
 **字段说明：**
 - **时间**：HH:MM（UTC 原始时间）
-- **记忆标签**：7类记忆类型（Event/Decision/Preference/Improve/To-do/Output/Emotion）
-- **事件类型**：5类事件类型（CoreWork/CollabResult/AuxTask/SelfEvolve/EnvAwareness）
+- **记忆标签**：5类记忆类型（Event/Preference/To-do/Output/Emotion）
+- **事件类型**：5类事件类型（CoreWork/EventsOutside/SelfEvolve/SocialEcology/RuleDecision）
 - **内容标签**：#tag1 #tag2（具体内容标签）
 
 ### L1 完整日志
@@ -264,14 +264,12 @@ memory-automation 的 API key 已失效或配置有误。
      - 内容标签达到升级阈值
    - 则升级到 L2
 
-### 7类记忆类型
+### 5类记忆类型
 
 | 类型 | 说明 | 示例 |
 |------|------|------|
-| Event | 客观事实、问题、需求 | "创建了文件"、"遇到了bug" |
-| Decision | 结论、规则、方案 | "决定采用"、"确认用" |
+| Event | 客观事实、问题、需求（包含原Decision/Improve） | "创建了文件"、"遇到了bug"、"决定采用" |
 | Preference | 用户偏好、习惯 | "我喜欢"、"不要用" |
-| Improve | 用户纠正、改进 | "改成"、"不对" |
 | To-do | 待办、下一步 | "去做"、"开始" |
 | Output | 产出物 | "完成了"、"生成了" |
 | Emotion | 情绪（只记积极/负面） | "烦躁"/"满意" |
@@ -281,7 +279,7 @@ memory-automation 的 API key 已失效或配置有误。
 | 类型 | 说明 |
 |------|------|
 | CoreWork | 本职核心业务与关键任务 |
-| CollabResult | 接收其他 Agent 交付的成果 |
-| AuxTask | 临时辅助、无重要成果的事务 |
-| SelfEvolve | 知识、纠错、规则、红线 |
-| EnvAwareness | 用户、系统、分工、规律 |
+| EventsOutside | 临时辅助、无重要成果的事务、游戏放松 |
+| SelfEvolve | 知识、纠错、习惯养成 |
+| SocialEcology | 用户关系、组织分工、环境规律 |
+| RuleDecision | 硬性规则、流程、约束 |
