@@ -303,22 +303,46 @@ add_correction(
 ## 配置管理
 
 ### API Key 管理
-- key 存储在 `config.json` 的 `llm.api_key`
-- 用户可通过提供新 key 来更新
+
+#### 自动提取（推荐）
+
+memory-automation 会自动从 OpenClaw 配置提取 API key：
+1. 检查 `~/.openclaw/agents/{agent}/agent/auth-profiles.json` 中的 minimax 配置
+2. 遍历常用 agent（xiaoxian, code, main, TS）查找可用 key
+3. 自动提取的 key 立即可用，无需手动配置
+
+#### 手动配置
+
+如需手动配置或覆盖自动提取：
+
+**方式 1：修改 config.json**
+```json
+{
+  "llm": {
+    "api_key": "your-api-key-here"
+  }
+}
+```
+
+**方式 2：环境变量**
+```bash
+export MINIMAX_API_KEY="your-api-key"
+```
 
 ### Agent 询问用户时的标准话术
 
-**首次询问 API key：**
+**首次激活时：**
 ```
-memory-automation 需要配置以下信息：
-1. API key（从哪里获取？）
-2. 供应商（默认 minimax）
-3. 模型（默认 MiniMax-M2.7）
+memory-automation 正在尝试自动配置...
+✓ 已从 OpenClaw 配置提取 API key（或：✗ 未找到 API key，需要手动配置）
 
-如暂不提供，将使用 regex 蒸馏（效果较差）。
+如需更换 API key：
+1. 提供新的 API key
+2. 指定供应商（默认 minimax）
+3. 指定模型（默认 MiniMax-M2.7）
 ```
 
-**API 错误询问：**
+**API 错误时：**
 ```
 memory-automation 的 API key 已失效或配置有误。
 请检查或提供新的 API key。
@@ -345,7 +369,8 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
 当用户说"请使用 memory-automation"时：
 1. Agent 执行 run_manual()
-2. 如果脚本输出 `[MEMORY-AUTOMATION] API_KEY: not_configured`，
-   Agent 询问用户是否提供 API key 和供应商
-3. 用户提供了 → Agent 将 key 写入 config.json
-4. 用户没有 → 使用 regex 蒸馏
+2. 系统自动尝试从 OpenClaw 配置提取 API key
+3. 如果提取成功 → 直接使用，无需用户配置
+4. 如果提取失败 → 提示用户手动配置 API key
+
+**注意**：从 v2.2.0 起，移除了 Regex 降级功能。LLM 蒸馏失败时将返回空结果，需要检查 API key 配置。

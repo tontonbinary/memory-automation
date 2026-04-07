@@ -129,9 +129,16 @@ class MessageProcessor:
 
         print(f"[MessageProcessor] 预清洗完成: {len(messages)} 条 -> {len(cleaned_all)} 条")
 
-        # 2. 对完整清洗消息蒸馏（一次性，得到绝对 source_idx）
+        # 2. 对完整清洗消息蒸馏（仅使用 LLM，失败返回空）
         raw_items = self.distiller.distill_messages(cleaned_all, use_llm=True, pre_cleaned=True)
 
+        # 检查 LLM 是否成功（raw_items 为空可能是 LLM 失败或无内容可提取）
+        if raw_items is None:
+            # LLM API 调用失败
+            print("[MessageProcessor] LLM 蒸馏失败，停止处理")
+            print("[MessageProcessor] 请检查 API key 配置或网络连接")
+            return 0, [], cleaned_all[-1].get('id') if cleaned_all else None
+        
         # 转换 DistilledItem dataclass 为 dict，展开 timestamp
         distilled_all = []
         for item in raw_items:
@@ -148,7 +155,8 @@ class MessageProcessor:
                 distilled_all.append(item)
 
         if not distilled_all:
-            print("[MessageProcessor] 蒸馏无有效结果")
+            print("[MessageProcessor] 蒸馏无有效内容（可能无值得记忆的信息）")
+            print("[MessageProcessor] 如果需要，可以检查 clean_session 文件手动分析")
             return 0, [], cleaned_all[-1].get('id') if cleaned_all else None
 
         # 事件类型判断

@@ -631,13 +631,25 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         # 不再手动分块循环
         lines_written, items, final_msg_id = self.message_processor.process_session(messages, force=True)
 
-        result.update({
-            "triggered": True,
-            "reason": "手动触发成功",
-            "items_distilled": len(items),
-            "lines_written": lines_written,
-            "session_key": session_key
-        })
+        # 检查处理结果
+        if lines_written == 0 and len(items) == 0:
+            # 可能是 LLM 失败或无内容
+            result.update({
+                "triggered": False,
+                "reason": "蒸馏未产生结果（LLM 失败或无有效内容）",
+                "items_distilled": 0,
+                "lines_written": 0,
+                "session_key": session_key,
+                "needs_attention": True
+            })
+        else:
+            result.update({
+                "triggered": True,
+                "reason": "手动触发成功",
+                "items_distilled": len(items),
+                "lines_written": lines_written,
+                "session_key": session_key
+            })
 
         return result
 
@@ -768,14 +780,26 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         # 直接处理（不再写 pending_queue）
         lines_written, items, final_msg_id = self.message_processor.process_session(messages, force=True)
 
-        result.update({
-            "triggered": True,
-            "reason": f"Heartbeat 处理完成",
-            "pending_count": 0,
-            "items_distilled": len(items),
-            "lines_written": lines_written,
-            "session_key": session_key
-        })
+        # 检查处理结果
+        if lines_written == 0 and len(items) == 0:
+            result.update({
+                "triggered": False,
+                "reason": "Heartbeat 处理完成，但蒸馏未产生结果（LLM 失败或无有效内容）",
+                "pending_count": 0,
+                "items_distilled": 0,
+                "lines_written": 0,
+                "session_key": session_key,
+                "needs_attention": True
+            })
+        else:
+            result.update({
+                "triggered": True,
+                "reason": f"Heartbeat 处理完成",
+                "pending_count": 0,
+                "items_distilled": len(items),
+                "lines_written": lines_written,
+                "session_key": session_key
+            })
 
         return result
 

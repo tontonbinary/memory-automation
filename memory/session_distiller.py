@@ -244,18 +244,75 @@ __SESSION_CONTENT__
         return default_config
 
     def _get_llm_config(self) -> Dict[str, Any]:
-        """获取 LLM 配置,优先从环境变量读取 API Key"""
+        """获取 LLM 配置，自动从多个来源提取 API Key"""
         llm_config = self.config.get("llm", {})
 
-        # 从环境变量读取 API Key(优先级最高)
+        # 优先级 1: 环境变量
         api_key = os.environ.get("MINIMAX_API_KEY") or os.environ.get("MINIMAX_API_TOKEN")
-
-        # 如果环境变量没有,尝试从配置读取
+        
+        # 优先级 2: 配置文件
         if not api_key and "api_key" in llm_config:
             api_key = llm_config["api_key"]
-
+            if api_key and not api_key.startswith("YOUR_"):
+                llm_config["api_key"] = api_key
+                return llm_config
+        
+        # 优先级 3: 自动从 OpenClaw 配置提取
+        if not api_key or api_key.startswith("YOUR_"):
+            api_key = self._extract_openclaw_api_key()
+        
         llm_config["api_key"] = api_key
         return llm_config
+    
+    def _extract_openclaw_api_key(self) -> Optional[str]:
+        """从 OpenClaw 配置自动提取 API key"""
+        try:
+            # 尝试读取默认 agent 的 auth-profiles
+            home = Path.home()
+            
+            # 尝试多个可能的 agent 目录
+            possible_agents = ["xiaoxian", "code", "main", "TS"]
+            
+            for agent in possible_agents:
+                auth_file = home / ".openclaw" / "agents" / agent / "agent" / "auth-profiles.json"
+                if auth_file.exists():
+                    with open(auth_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    profiles = data.get("profiles", {})
+                    
+                    # 优先查找 minimax
+                    for profile_name, profile in profiles.items():
+                        if "minimax" in profile_name.lower():
+                            token = profile.get("access") or profile.get("key")
+                            if token:
+                                print(f"[SessionDistiller] 已从 OpenClaw ({agent}/{profile_name}) 提取 API key")
+                                return token
+                    
+                    # 其次查找任何 API key
+                    for profile_name, profile in profiles.items():
+                        token = profile.get("access") or profile.get("key")
+                        if token and len(token) > 20:  # 简单验证长度
+                            print(f"[SessionDistiller] 已从 OpenClaw ({agent}/{profile_name}) 提取 API key")
+                            return token
+            
+            # 尝试 openclaw.json
+            openclaw_config = home / ".openclaw" / "openclaw.json"
+            if openclaw_config.exists():
+                with open(openclaw_config, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                # 尝试各种可能的路径
+                llm_config = data.get("llm", {})
+                if isinstance(llm_config, dict):
+                    api_key = llm_config.get("api_key") or llm_config.get("apiKey")
+                    if api_key:
+                        print("[SessionDistiller] 已从 openclaw.json 提取 API key")
+                        return api_key
+                        
+        except Exception as e:
+            print(f"[SessionDistiller] 自动提取 API key 失败: {e}")
+        
+        return None
 
     def _clean_content(self, content: str) -> str:
         """
@@ -859,48 +916,49 @@ __SESSION_CONTENT__
     def distill_messages(self, messages: List[Dict[str, Any]], use_llm: bool = True,
                         pre_cleaned: bool = False) -> List[DistilledItem]:
         """
-        从消息列表中蒸馏关键信息
+        从消息列表中蒸馏关键信息（仅使用 LLM，失败则返回空）
 
         Args:
             messages: 消息列表,每个消息为字典,包含 role 和 content
-            use_llm: 是否优先使用 LLM 蒸馏(默认 True)
-            pre_cleaned: 消息是否已经过预清洗(默认 False,
-                         为 True 时跳过内部 _format_messages_for_prompt)
+            use_llm: 是否使用 LLM 蒸馏(默认 True)
+            pre_cleaned: 消息是否已经过预清洗
 
         Returns:
-            蒸馏后的记忆项列表
+            蒸馏后的记忆项列表，LLM 失败时返回空列表
         """
-        # 优先尝试 LLM 蒸馏
-        if use_llm and self.llm_config.get("enabled", True):
-            try:
-                llm_items = self.distill_with_llm(messages, pre_cleaned=pre_cleaned)
-                if llm_items:
-                    return llm_items
-                # LLM 返回空结果,检查是否启用降级
-                if not self.config.get("fallback_to_regex", True):
-                    return []
-                print("[SessionDistiller] LLM 未提取到内容,降级到正则匹配...")
-            except Exception as e:
-                error_msg = str(e)
-                if "API_KEY" in error_msg or "API_ERROR" in error_msg:
-                    # 已经是 [MEMORY-AUTOMATION] 格式的错误消息,直接打印
-                    pass
-                elif "401" in error_msg or "403" in error_msg:
-                    print("[MEMORY-AUTOMATION] API_ERROR: API_KEY_INVALID")
-                elif "429" in error_msg:
-                    print("[MEMORY-AUTOMATION] API_ERROR: API_RATE_LIMITED")
-                elif "JSON" in error_msg or "Parse" in error_msg:
-                    print(f"[MEMORY-AUTOMATION] API_ERROR: API_RESPONSE_PARSE_ERROR")
-                elif "Connection" in error_msg or "network" in error_msg.lower():
-                    print("[MEMORY-AUTOMATION] API_ERROR: API_CONNECTION_ERROR")
-                else:
-                    print(f"[MEMORY-AUTOMATION] API_ERROR: {type(e).__name__}")
-                print(f"[SessionDistiller] LLM 蒸馏异常,降级到正则匹配: {e}")
-                if not self.config.get("fallback_to_regex", True):
-                    return []
-
-        # 正则匹配(作为 fallback)
-        return self._distill_with_regex(messages)
+        if not use_llm or not self.llm_config.get("enabled", True):
+            print("[SessionDistiller] LLM 蒸馏已禁用")
+            return []
+        
+        # 检查 API key 是否配置
+        if not self.llm_config.get("api_key"):
+            print("[MEMORY-AUTOMATION] API_ERROR: API_KEY_NOT_CONFIGURED")
+            print("[SessionDistiller] 请先配置 LLM API key")
+            return []
+        
+        try:
+            llm_items = self.distill_with_llm(messages, pre_cleaned=pre_cleaned)
+            if llm_items:
+                return llm_items
+            # LLM 返回空结果（无有效内容可提取）
+            print("[SessionDistiller] LLM 未提取到有效内容")
+            return []
+        except Exception as e:
+            error_msg = str(e)
+            if "API_KEY" in error_msg or "API_ERROR" in error_msg:
+                pass  # 已打印格式化错误
+            elif "401" in error_msg or "403" in error_msg:
+                print("[MEMORY-AUTOMATION] API_ERROR: API_KEY_INVALID")
+            elif "429" in error_msg:
+                print("[MEMORY-AUTOMATION] API_ERROR: API_RATE_LIMITED")
+            elif "JSON" in error_msg or "Parse" in error_msg:
+                print("[MEMORY-AUTOMATION] API_ERROR: API_RESPONSE_PARSE_ERROR")
+            elif "Connection" in error_msg or "network" in error_msg.lower():
+                print("[MEMORY-AUTOMATION] API_ERROR: API_CONNECTION_ERROR")
+            else:
+                print(f"[MEMORY-AUTOMATION] API_ERROR: {type(e).__name__}")
+            print(f"[SessionDistiller] LLM 蒸馏失败: {e}")
+            return []
 
     def _distill_with_regex(self, messages: List[Dict[str, Any]]) -> List[DistilledItem]:
         """
