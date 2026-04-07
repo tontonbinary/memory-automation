@@ -266,9 +266,9 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         agent_id = self.agent_id or "{agent_id}"
         
         # 使用字符串拼接避免 f-string 中 JSON 大括号的问题
-        config_json_example = '''{
+        config_local_example = '''{
     "llm": {
-      "api_key": "",
+      "api_key": "your-api-key",
       "provider": "minimax",
       "model": "MiniMax-Text-01"
     }
@@ -278,7 +278,7 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
     "profiles": {
       "minimax-portal:default": {
         "type": "oauth",
-        "access": ""
+        "access": "your-api-key"
       }
     }
   }'''
@@ -290,18 +290,27 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 方法 1: 环境变量（推荐，立即生效）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  export MINIMAX_API_KEY=""
+  export MINIMAX_API_KEY="your-api-key"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-方法 2: 配置文件
+方法 2: 本地配置文件（推荐，不会被 Git 提交）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  创建或编辑：~/.openclaw/skills/memory-automation/config.json
+  创建：~/.openclaw/skills/memory-automation/config.local.json
   
   内容格式：
-  {config_json_example}
+  {config_local_example}
+
+  提示：config.local.json 已添加到 .gitignore，可安全存放真实 API key
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-方法 3: OpenClaw 默认配置
+方法 3: 模板配置文件
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  编辑：~/.openclaw/skills/memory-automation/config.json
+  
+  注意：此文件会被 Git 跟踪，请确保提交前 api_key 为空！
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+方法 4: OpenClaw 默认配置
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   确保以下文件存在且包含有效 key：
   ~/.openclaw/agents/{agent_id}/agent/auth-profiles.json
