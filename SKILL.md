@@ -96,8 +96,30 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 | 优先级 | 来源 | 说明 |
 |--------|------|------|
 | 1 | 环境变量 | `MINIMAX_API_KEY` 或 `MINIMAX_API_TOKEN` |
-| 2 | config.json | `~/.openclaw/skills/memory-automation/config.json` |
-| 3 | OpenClaw 配置 | `~/.openclaw/agents/{agent}/agent/auth-profiles.json` |
+| 2 | config.local.json | `~/.openclaw/skills/memory-automation/config.local.json`（本地配置，不提交 Git） |
+| 3 | config.json | `~/.openclaw/skills/memory-automation/config.json`（模板配置） |
+| 4 | OpenClaw 配置 | `~/.openclaw/agents/{agent}/agent/auth-profiles.json` |
+
+### 本地开发与 Git 提交的最佳实践
+
+**推荐方案：config.local.json（本地）+ config.json（模板）**
+
+```bash
+# 1. 本地开发使用 config.local.json（真实 API key，不提交 Git）
+cp config.json config.local.json
+# 编辑 config.local.json，填入真实 api_key
+
+# 2. 保持 config.json 作为模板（api_key 为空或占位符）
+# 此文件提交到 Git，供其他用户使用
+```
+
+**文件说明：**
+
+| 文件 | 用途 | 是否提交 Git |
+|------|------|-------------|
+| `config.local.json` | 本地开发配置，存放真实 API key | ❌ 否（已在 .gitignore） |
+| `config.json` | 模板配置，api_key 为空或占位符 | ✅ 是 |
+| `config.example.json` | 空模板示例 | ✅ 是 |
 
 ### 配置失败时的补救措施
 
