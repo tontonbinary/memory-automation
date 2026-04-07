@@ -86,19 +86,36 @@ class ReferenceManager:
             api_key = env_key
             api_key_source = "environment"
         
-        # 2. 检查 config.json
+        # 2. 检查 config.json（优先级：config.local.json > config.json）
         if not api_key:
-            config_path = Path("~/.openclaw/skills/memory-automation/config.json").expanduser()
-            if config_path.exists():
+            skill_dir = Path("~/.openclaw/skills/memory-automation").expanduser()
+            
+            # 优先检查 config.local.json（本地配置，不提交到 Git）
+            local_config_path = skill_dir / "config.local.json"
+            if local_config_path.exists():
                 try:
-                    with open(config_path) as f:
+                    with open(local_config_path) as f:
                         config = json.load(f)
                         cfg_key = config.get("llm", {}).get("api_key", "")
                         if cfg_key and not cfg_key.startswith("YOUR_"):
                             api_key = cfg_key
-                            api_key_source = "config.json"
+                            api_key_source = "config.local.json"
                 except:
                     pass
+            
+            # 然后检查 config.json（模板配置）
+            if not api_key:
+                config_path = skill_dir / "config.json"
+                if config_path.exists():
+                    try:
+                        with open(config_path) as f:
+                            config = json.load(f)
+                            cfg_key = config.get("llm", {}).get("api_key", "")
+                            if cfg_key and not cfg_key.startswith("YOUR_"):
+                                api_key = cfg_key
+                                api_key_source = "config.json"
+                    except:
+                        pass
         
         # 3. 尝试从 OpenClaw 配置提取
         if not api_key:

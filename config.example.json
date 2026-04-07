@@ -85,7 +85,7 @@
     "max_tokens": 4000,
     "timeout": 60,
     "stream": false,
-    "api_key": "YOUR_API_KEY_HERE",
+    "api_key": "",
     "api_key_asked": true
   },
   "l2": {

@@ -6,3 +6,6 @@ __pycache__/
 memory/
 !memory/__init__.py
 !memory/*.py
+
+# 本地配置文件（包含真实 API key，不要提交到 Git）
+config.local.json
