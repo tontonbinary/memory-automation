@@ -910,13 +910,13 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
             else:
                 print(f"[MemoryAutomation] [Heartbeat] 旧 session 无遗漏消息或已全部处理")
         
-        # ===== 第二步：积压处理（当前 session 无消息时）=====
-        # 无论间隔时间是否到达，都检查积压（积压检查成本低）
-        if not messages:
-            print("[MemoryAutomation] [Heartbeat] 活跃 session 无新消息，检查积压...")
-            backlog_result = self._check_and_process_backlog()
-            if backlog_result:
-                result["backlog_processed"] = backlog_result
+        # ===== 第二步：积压处理（无条件执行）=====
+        # Fix: #2 - 积压处理不应依赖当前 session 是否有消息
+        # 无论当前 session 是否有消息，都检查积压（每次最多处理1个）
+        print("[MemoryAutomation] [Heartbeat] 检查积压 session...")
+        backlog_result = self._check_and_process_backlog()
+        if backlog_result:
+            result["backlog_processed"] = backlog_result
         
         # ===== 第三步：检查活跃 session 处理间隔 =====
         interval = self.config.get("heartbeat_interval_minutes", 30)
