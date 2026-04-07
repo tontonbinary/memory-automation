@@ -887,7 +887,16 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
             result["reason"] = "无法获取当前会话"
             return result
 
-        # 检查是否需要处理
+        # ===== 优先检查积压的历史 session =====
+        # 无论间隔时间是否到达，都检查积压（积压检查成本低）
+        # Fix: #1 - 积压处理不应受间隔时间影响
+        if not messages:
+            print("[MemoryAutomation] [Heartbeat] 活跃 session 无新消息，检查积压...")
+            backlog_result = self._check_and_process_backlog()
+            if backlog_result:
+                result["backlog_processed"] = backlog_result
+        
+        # 检查是否需要处理活跃 session
         interval = self.config.get("heartbeat_interval_minutes", 30)
         should_process, reason = self.session_manager.check_should_process(
             session_key, interval
@@ -923,7 +932,9 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         # ===== Session 切换处理结束 =====
 
         if not should_process:
-            result["reason"] = f"无需处理: {reason}"
+            result["reason"] = f"间隔时间未到: {reason}"
+            if result.get("backlog_processed"):
+                result["reason"] += "（但已检查积压）"
             return result
 
         print(f"[MemoryAutomation] {reason}")
@@ -967,13 +978,8 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                 result["summary"] = summary
                 print(summary)
         
-        # ===== 处理积压的历史 session =====
-        # 如果活跃 session 没有新消息或处理完成，检查是否有积压
-        if not messages or (lines_written == 0 and len(items) == 0):
-            print("[MemoryAutomation] [Heartbeat] 活跃 session 无新内容，检查积压...")
-            backlog_result = self._check_and_process_backlog()
-            if backlog_result:
-                result["backlog_processed"] = backlog_result
+        # 注意：积压检查已提前到 should_process 判断之前（第 890 行附近）
+        # Fix: #1 - 确保积压处理不受间隔时间影响
         
         return result
 
