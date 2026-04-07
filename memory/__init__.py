@@ -3,7 +3,7 @@ Memory Automation Skill - 分层记忆管理模块
 
 统一四层架构：
 - L0: Session 原始记录
-- L1: 每日日志（Event/Decision/Preference/Improve/To-do/Output/Emotion）
+- L1: 每日日志（Event/Preference/To-do/Output/Emotion）
 - L2: 自我改进层（corrections → patterns → insights）
 - L3: 长期记忆（verified insights）
 """

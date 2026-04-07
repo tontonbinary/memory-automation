@@ -16,7 +16,7 @@ import urllib.error
 
 @dataclass
 class DistilledItem:
-    """蒸馏后的记忆项（7类：Event, Decision, Preference, Improve, To-do, Output, Emotion）"""
+    """蒸馏后的记忆项（5类：Event, Preference, To-do, Output, Emotion）"""
     item_type: str  # Event, Decision, Preference, Improve, To-do, Output, Emotion
     content: str
     emotion: Optional[str] = None  # 积极|负面|null
@@ -196,7 +196,7 @@ __SESSION_CONTENT__
 1. 只提取真正值得记忆的内容，过滤闲聊、重复、临时信息
 2. 内容要简洁具体，不要泛泛而谈
 3. 每个提取项必须指定 type，不允许其他 type 值
-4. **source_idx 必填**：必须是单个整数（消息序号，对应 `[1]`、`[2]` 等方括号中的数字），禁止使用数组
+4. **source_idx 必填**：必须是消息在会话中的序号（对应 `[1]`、`[2]` 等方括号中的数字）
 5. 如果没有值得提取的内容，返回 {"items": []}
 6. **必须**返回合法的 JSON 格式，不要添加 markdown 代码块标记
 """
@@ -829,7 +829,7 @@ __SESSION_CONTENT__
 
         # 转换为 DistilledItem 对象
         distilled_items = []
-        VALID_TYPES = {"Event", "Decision", "Preference", "Improve", "To-do", "Output", "Emotion", "Action", "Oput"}
+        VALID_TYPES = {"Event", "Preference", "To-do", "Output", "Emotion"}
         for item_data in items_data:
             try:
                 # 验证必要字段（支持 type 或 item_type）
@@ -849,7 +849,7 @@ __SESSION_CONTENT__
                 elif item_type not in VALID_TYPES:
                     item_type = "Event"  # 默认类型
 
-                # 构建 DistilledItem（新格式7类）
+                # 构建 DistilledItem（新格式5类）
                 source_idx_raw = item_data.get("source_idx", 0)
                 try:
                     source_idx = int(source_idx_raw) if source_idx_raw else 0
