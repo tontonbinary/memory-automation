@@ -1,4 +1,10 @@
 {
+  "skill_name": "memory-automation",
+  "version": "2.1.0",
+  "type": "public",
+  "description": "分层记忆管理 Skill，实现 L0→L1→L2→L3 的完整记忆流转",
+  "agent_id": "code",
+  
   "trigger_keywords": [
     "记住",
     "记忆",
@@ -13,17 +19,13 @@
     "我想要",
     "忘了吗"
   ],
-  "heartbeat_interval_minutes": 30,
+  "heartbeat_interval_minutes": 360,
   "state_file": "memory/heartbeat-state.json",
   "memory_rules": "~/.openclaw/memory-rules.md",
   "min_message_length": 10,
   "l1_history_days": 7,
   "pattern_threshold": 3,
-  "skill_name": "memory-automation",
-  "version": "2.0.0",
-  "type": "public",
-  "description": "记忆自动化 Skill，实现会话内容的智能蒸馏与持久化存储（Agent 自蒸馏模式，无需 API Key）",
-  "agent_id": "code",
+  
   "triggers": {
     "manual": {
       "enabled": true,
@@ -56,14 +58,17 @@
     },
     "heartbeat": {
       "enabled": true,
-      "interval_minutes": 30
+      "interval_minutes": 360
     }
   },
+  
   "paths": {
     "l1_template": "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md",
+    "l2_dir": "~/.openclaw/workspaces/{agent}/workspace/memory/L2",
     "state_file": "memory/heartbeat-state.json",
     "memory_rules": "~/.openclaw/memory-rules.md"
   },
+  
   "distillation": {
     "extract_types": [
       "event",
@@ -75,6 +80,7 @@
     "max_messages_per_distill": 50,
     "min_message_length": 10
   },
+  
   "llm": {
     "enabled": true,
     "provider": "minimax",
@@ -84,13 +90,26 @@
     "max_tokens": 4000,
     "timeout": 60,
     "stream": false,
-    "api_key": "YOUR_API_KEY_REMOVED",
+    "api_key": "YOUR_API_KEY_HERE",
     "api_key_asked": true
   },
+  
+  "l2": {
+    "enabled": true,
+    "auto_promote_threshold": 3,
+    "files": {
+      "corrections": "corrections.md",
+      "patterns": "patterns.md",
+      "insights": "insights.md"
+    },
+    "insight_ttl_days": 7
+  },
+  
   "regex": {
     "count": 0,
     "count_asked": true
   },
+  
   "fallback_to_regex": true,
   "entry_point": "memory/automation.py",
   "agent_self_distill": true,

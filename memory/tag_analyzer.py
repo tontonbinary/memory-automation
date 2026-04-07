@@ -19,20 +19,25 @@ class TagAnalyzer:
     # 标签正则表达式 - 匹配 #标签名 格式
     TAG_PATTERN = re.compile(r'#([^\s#]+)')
     
-    def __init__(self, agent_id: str = "code", l1_path: Optional[str] = None):
+    def __init__(self, agent_id: str, l1_path: Optional[str] = None):
         """
         初始化标签分析器
         
         Args:
-            agent_id: Agent ID，用于构建默认 L1 路径
+            agent_id: Agent ID（必需），用于构建默认 L1 路径
             l1_path: 自定义 L1 路径，覆盖默认模板
+        
+        Raises:
+            ValueError: 如果 agent_id 为空且未提供 l1_path
         """
         if l1_path:
             self.l1_base_path = Path(l1_path).expanduser()
-        else:
+        elif agent_id:
             self.l1_base_path = Path(
                 self.L1_PATH_TEMPLATE.format(agent=agent_id)
             ).expanduser()
+        else:
+            raise ValueError("必须提供 agent_id 或 l1_path")
     
     def find_memory_files(self, days_back: int = 7) -> List[Path]:
         """

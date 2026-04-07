@@ -30,7 +30,7 @@ class L1ToL2Promoter:
     DEFAULT_MIN_OCCURRENCES = 3  # 最少出现3次
     
     def __init__(self, 
-                 agent_id: str = "code",
+                 agent_id: str,
                  l1_path: Optional[str] = None,
                  l2_path: Optional[str] = None,
                  state_file: Optional[str] = None):
@@ -38,17 +38,23 @@ class L1ToL2Promoter:
         初始化 L1→L2 提升器
         
         Args:
-            agent_id: Agent ID
+            agent_id: Agent ID（必需）
             l1_path: L1 路径
-            l2_path: L2 路径
+            l2_path: L2 路径（可选，默认使用 agent_id 隔离的路径）
             state_file: 状态文件路径
+        
+        Raises:
+            ValueError: 如果 agent_id 为空
         """
+        if not agent_id:
+            raise ValueError("agent_id 是必需的，不能为空")
+        
         self.agent_id = agent_id
         self.state_file = Path(state_file or self.DEFAULT_STATE_FILE).expanduser()
         
-        # 初始化组件
+        # 初始化组件（确保按 agent 隔离）
         self.analyzer = TagAnalyzer(agent_id=agent_id, l1_path=l1_path)
-        self.writer = L2Writer(l2_path=l2_path)
+        self.writer = L2Writer(agent_id=agent_id, l2_path=l2_path)
         
         # 加载状态
         self.state = self._load_state()
@@ -197,7 +203,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="L1→L2 自动提升工具")
-    parser.add_argument("--agent", default="code", help="Agent ID (默认: code)")
+    parser.add_argument("--agent", required=True, help="Agent ID (必需)")
     parser.add_argument("--days", type=int, default=7, help="回溯天数 (默认: 7)")
     parser.add_argument("--min", type=int, default=3, dest="min_occurrences",
                        help="最小出现次数 (默认: 3)")

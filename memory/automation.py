@@ -41,7 +41,10 @@ class MemoryAutomation:
         self.config = self._load_config(config_path)
 
         # 初始化参考内容管理器（从 heartbeat-state.json 读取配置）
-        self.reference_manager = ReferenceManager(agent_id=self.agent_id or "code")
+        # 注意：agent_id 必须在初始化时明确指定，不允许 fallback
+        if not self.agent_id:
+            raise ValueError("agent_id 是必需的，请通过 --agent 参数指定")
+        self.reference_manager = ReferenceManager(agent_id=self.agent_id)
 
         # 初始化 session_manager（合并了 state_manager 功能）
         self.session_manager = SessionManager(
@@ -79,14 +82,14 @@ class MemoryAutomation:
         # 确保 L1 目录存在
         self._ensure_l1_directory()
 
-    def _detect_agent_id(self) -> str:
+    def _detect_agent_id(self) -> Optional[str]:
         """
         自动检测当前 agent_id
 
-        优先级：环境变量 > workspace 路径推断 > config 默认 > fallback "code"
+        优先级：环境变量 > workspace 路径推断 > 最近访问的 workspace
 
         Returns:
-            检测到的 agent_id
+            检测到的 agent_id，如果无法检测则返回 None（不 fallback 到默认值）
         """
         # 1. 检查环境变量
         env_agent = os.environ.get("OPENCLAW_AGENT_ID")
@@ -227,11 +230,7 @@ class MemoryAutomation:
             return True
 
         # 创建 heartbeat 文件
-        heartbeat_content = f"""# HEARTBEAT.md
-
-# Keep this file empty (or with only comments) to skip heartbeat API calls.
-
-# Memory Automation - 自动将会话蒸馏到 L1 记忆层
+        heartbeat_content = f"""## memory-automation
 cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbeat --agent {self.agent_id}
 """
         try:
@@ -524,6 +523,15 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         Returns:
             处理结果
         """
+        # 静默时段检查：避开 Auto-Dream 运行时间 (03:55-04:10)
+        from datetime import datetime
+        now = datetime.now()
+        if (now.hour == 4 and now.minute < 10) or (now.hour == 3 and now.minute >= 55):
+            return {
+                "triggered": False,
+                "reason": "当前处于静默时段（03:55-04:10），建议稍后再试"
+            }
+
         # 无 agent_id → 报错提示
         if not self.agent_id:
             detected = self._detect_agent_id()
@@ -653,6 +661,20 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         Returns:
             处理结果
         """
+        # 时间窗口检查：避开 Auto-Dream 运行时间 (03:55-04:10)
+        from datetime import datetime
+        now = datetime.now()
+        if now.hour == 4 and now.minute < 10:
+            return {
+                "triggered": False,
+                "reason": "跳过执行：避开 Auto-Dream 运行时间窗口 (03:55-04:10)"
+            }
+        if now.hour == 3 and now.minute >= 55:
+            return {
+                "triggered": False,
+                "reason": "跳过执行：避开 Auto-Dream 运行时间窗口 (03:55-04:10)"
+            }
+
         # 无 agent_id → 跳过执行，写入激活标记
         if not self.agent_id:
             result = {
@@ -758,21 +780,119 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         return result
 
 
+def _handle_l2_command(args: list) -> dict:
+    """
+    处理 L2 相关子命令
+    
+    命令：
+      l2 correct --agent <id> --content "..." [--source binary] [--context "..."]
+      l2 process --agent <id>
+      l2 status --agent <id>
+    """
+    from .l2_extraction import (
+        add_correction, get_corrections,
+        get_patterns, process_patterns_from_corrections,
+        get_insights
+    )
+    
+    # args[0] = 'memory.automation', args[1] = 'l2', args[2] = 子命令
+    if len(args) < 3:
+        print("L2 自我改进层命令：")
+        print("  l2 correct --agent <id> --content \"...\" [--source binary|self] [--context \"...\"]")
+        print("  l2 process --agent <id>")
+        print("  l2 status --agent <id>")
+        return {"error": "缺少子命令"}
+    
+    subcmd = args[2].lower()
+    
+    # 解析参数 (从 args[3] 开始，因为 args[0]=模块名, args[1]=l2, args[2]=子命令)
+    agent_id = None
+    content = None
+    source = "self"
+    context = ""
+    
+    i = 3
+    while i < len(args):
+        if args[i] == "--agent" and i + 1 < len(args):
+            agent_id = args[i + 1]
+            i += 2
+        elif args[i] == "--content" and i + 1 < len(args):
+            content = args[i + 1]
+            i += 2
+        elif args[i] == "--source" and i + 1 < len(args):
+            source = args[i + 1]
+            i += 2
+        elif args[i] == "--context" and i + 1 < len(args):
+            context = args[i + 1]
+            i += 2
+        else:
+            i += 1
+    
+    if not agent_id:
+        return {"error": "缺少 --agent 参数"}
+    
+    if subcmd == "correct":
+        if not content:
+            return {"error": "correct 命令需要 --content 参数"}
+        add_correction(agent_id, content, source, context)
+        return {"success": True, "action": "add_correction", "agent": agent_id}
+    
+    elif subcmd == "process":
+        # 从 corrections 生成 patterns
+        count = process_patterns_from_corrections(agent_id)
+        return {"success": True, "action": "process_patterns", "corrections_processed": count}
+    
+    elif subcmd == "status":
+        corrections = get_corrections(agent_id)
+        patterns = get_patterns(agent_id)
+        insights = get_insights(agent_id)
+        print(f"\n[L2 Status] Agent: {agent_id}")
+        print(f"  Corrections: {len(corrections)}")
+        print(f"  Patterns: {len(patterns)}")
+        print(f"  Insights: {len(insights)}")
+        return {
+            "success": True,
+            "corrections_count": len(corrections),
+            "patterns_count": len(patterns),
+            "insights_count": len(insights)
+        }
+    
+    else:
+        return {"error": f"未知 L2 子命令: {subcmd}"}
+
+
 def main():
     """主入口函数"""
     if len(sys.argv) < 2:
-        print("用法: python -m memory.automation [manual|heartbeat|old-session] [--agent <agent_id>] [--session <session_file>]")
+        print("用法: python -m memory.automation <命令> [选项]")
+        print("")
+        print("L1 记忆管理（原有）：")
         print("  manual    - 手动触发记忆蒸馏")
         print("  heartbeat - Heartbeat 触发记忆蒸馏")
         print("  old-session <key> - 处理已 reset 的旧 session")
+        print("")
+        print("L2 自我改进层（新增）：")
+        print("  l2 correct --agent <id> --content \"...\" - 添加纠正记录")
+        print("  l2 process --agent <id> - 从 corrections 生成 patterns")
+        print("  l2 status --agent <id> - 查看 L2 状态")
+        print("")
+        print("通用选项：")
         print("  --agent <id> - 指定 agent ID（必需）")
-        print("  --session <file> - 指定要处理的 session 文件（绝对路径）")
-        print("  示例: python -m memory.automation manual --agent code")
-        print("  示例: python -m memory.automation heartbeat --agent xiaoxian")
-        print("  示例: python -m memory.automation old-session 'agent:xiaoxian:feishu:direct:ou_xxx' --agent code")
+        print("  --session <file> - 指定 session 文件路径（仅 manual 模式）")
+        print("")
+        print("示例:")
+        print("  python -m memory.automation manual --agent code")
+        print("  python -m memory.automation heartbeat --agent xiaoxian")
+        print("  python -m memory.automation l2 correct --agent code --content \"纠正内容\" --source binary")
         sys.exit(1)
 
     mode = sys.argv[1].lower()
+    
+    # L2 子命令处理
+    if mode == "l2":
+        result = _handle_l2_command(sys.argv)
+        print("\n" + json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result.get("success") else 1)
 
     # 解析可选参数
     session_file = None
@@ -828,7 +948,7 @@ def main():
             print(f"\n[结果] {result['reason']}")
     else:
         print(f"错误: 未知模式 '{mode}'")
-        print("用法: python -m memory.automation [manual|heartbeat]")
+        print("用法: python -m memory.automation [manual|heartbeat|l2]")
         sys.exit(1)
 
     # 输出 JSON 结果（供调用方解析）
