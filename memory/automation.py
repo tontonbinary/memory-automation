@@ -268,7 +268,7 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         # 使用字符串拼接避免 f-string 中 JSON 大括号的问题
         config_json_example = '''{
     "llm": {
-      "api_key": "your-api-key",
+      "api_key": "",
       "provider": "minimax",
       "model": "MiniMax-Text-01"
     }
@@ -278,7 +278,7 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
     "profiles": {
       "minimax-portal:default": {
         "type": "oauth",
-        "access": "your-api-key"
+        "access": ""
       }
     }
   }'''
@@ -290,7 +290,7 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 方法 1: 环境变量（推荐，立即生效）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  export MINIMAX_API_KEY="your-api-key"
+  export MINIMAX_API_KEY=""
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 方法 2: 配置文件
