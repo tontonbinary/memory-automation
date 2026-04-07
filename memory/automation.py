@@ -887,54 +887,49 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
             result["reason"] = "无法获取当前会话"
             return result
 
-        # ===== 优先检查积压的历史 session =====
+        # ===== 第一步：Session 切换处理（无条件执行）=====
+        # 检查是否需要处理旧 session（session_key 变化时）
+        # 注意：此逻辑不受间隔时间影响，确保消息不遗漏
+        state = self.session_manager._load_state()
+        last_session = state.get("last_session_key")
+        last_msg = state.get("last_processed_msg_id")
+        
+        if last_session and last_session != session_key:
+            print(f"[MemoryAutomation] [Heartbeat] 检测到 session 切换: {last_session} -> {session_key}")
+            print(f"[MemoryAutomation] [Heartbeat] 先处理旧 session 的未蒸馏消息...")
+
+            old_items_count, old_items = self.process_old_session(last_session, last_msg)
+            result["old_session_processed"] = True
+            result["old_session_items"] = old_items_count
+            
+            if old_items and old_items_count > 0:
+                print(f"[MemoryAutomation] [Heartbeat] 旧 session 处理完成: {old_items_count} 项已蒸馏")
+                old_summary = self._generate_summary(old_items, old_items_count * 7)
+                print("\n【旧 Session 处理结果】")
+                print(old_summary)
+            else:
+                print(f"[MemoryAutomation] [Heartbeat] 旧 session 无遗漏消息或已全部处理")
+        
+        # ===== 第二步：积压处理（当前 session 无消息时）=====
         # 无论间隔时间是否到达，都检查积压（积压检查成本低）
-        # Fix: #1 - 积压处理不应受间隔时间影响
         if not messages:
             print("[MemoryAutomation] [Heartbeat] 活跃 session 无新消息，检查积压...")
             backlog_result = self._check_and_process_backlog()
             if backlog_result:
                 result["backlog_processed"] = backlog_result
         
-        # 检查是否需要处理活跃 session
+        # ===== 第三步：检查活跃 session 处理间隔 =====
         interval = self.config.get("heartbeat_interval_minutes", 30)
         should_process, reason = self.session_manager.check_should_process(
             session_key, interval
         )
 
-        # ===== Session 切换处理 =====
-        # 如果是 session_key 变化，先处理旧 session 的未蒸馏消息
-        if reason and "session_key 变化" in reason:
-            # 获取上次的 session 信息
-            last_session = self.session_manager._load_state().get("last_session_key")
-            last_msg = self.session_manager.get_last_processed_msg_id()
-
-            if last_session and last_session != session_key:
-                print(f"[MemoryAutomation] [Heartbeat] 检测到 session 切换: {last_session} -> {session_key}")
-                print(f"[MemoryAutomation] [Heartbeat] 先处理旧 session 的未蒸馏消息...")
-
-                # 处理旧 session
-                old_items_count, old_items = self.process_old_session(
-                    last_session, last_msg
-                )
-
-                result["old_session_processed"] = True
-                result["old_session_items"] = old_items_count
-                
-                # 生成并打印旧 session 摘要
-                if old_items and old_items_count > 0:
-                    print(f"[MemoryAutomation] [Heartbeat] 旧 session 处理完成: {old_items_count} 项已蒸馏")
-                    old_summary = self._generate_summary(old_items, old_items_count * 7)
-                    print("\n【旧 Session 处理结果】")
-                    print(old_summary)
-                else:
-                    print(f"[MemoryAutomation] [Heartbeat] 旧 session 无遗漏消息或已全部处理")
-        # ===== Session 切换处理结束 =====
-
         if not should_process:
             result["reason"] = f"间隔时间未到: {reason}"
             if result.get("backlog_processed"):
                 result["reason"] += "（但已检查积压）"
+            if result.get("old_session_processed"):
+                result["reason"] += "（已处理旧 session）"
             return result
 
         print(f"[MemoryAutomation] {reason}")
