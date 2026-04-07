@@ -17,13 +17,13 @@ from typing import Dict, List, Optional, Set, Tuple
 class ReferenceManager:
     """参考内容管理器"""
     
-    # 事件类型定义
+    # 事件类型定义（5类）
     EVENT_TYPES = {
         "CoreWork": "本职核心业务与关键任务",
-        "CollabResult": "接收其他 Agent 交付的成果",
-        "AuxTask": "临时辅助、无重要成果的事务",
-        "SelfEvolve": "知识、纠错、规则、红线",
-        "EnvAwareness": "用户、系统、分工、规律"
+        "EventsOutside": "临时辅助、无重要成果的事务、游戏放松",
+        "SelfEvolve": "知识、纠错、习惯养成",
+        "SocialEcology": "用户关系、组织分工、环境规律",
+        "RuleDecision": "硬性规则、流程、约束"
     }
     
     def __init__(self, agent_id: str, state_file: Optional[str] = None):
@@ -287,42 +287,43 @@ class ReferenceManager:
         
         Args:
             content: 蒸馏内容
-            item_type: 7 类之一（Event/Decision/Preference/Improve/To-do/Output/Emotion）
+            item_type: 5 类之一（Event/Preference/To-do/Output/Emotion）
             
         Returns:
-            事件类型（CoreWork/CollabResult/AuxTask/SelfEvolve/EnvAwareness）
+            事件类型（CoreWork/EventsOutside/SelfEvolve/SocialEcology/RuleDecision）
         """
         content_lower = content.lower()
         
-        # Improve 类型 → SelfEvolve
-        if item_type == "Improve":
+        # 关键词匹配（按优先级排序）
+        
+        # 1. RuleDecision - 硬性规则、流程
+        if any(kw in content_lower for kw in ["必须", "禁止", "规范", "标准", "规则", "流程", "约束"]):
+            return "RuleDecision"
+        
+        # 2. SelfEvolve - 知识、纠错、习惯养成
+        if item_type in ["Improve", "SelfEvolve"] or \
+           any(kw in content_lower for kw in ["纠正", "改进", "学习", "进化", "习惯养成", "知识"]):
             return "SelfEvolve"
         
-        # Preference 类型 → EnvAwareness（用户偏好属于环境认知）
-        if item_type == "Preference":
-            return "EnvAwareness"
+        # 3. SocialEcology - 用户关系、组织分工、环境规律
+        if item_type == "Preference" or \
+           any(kw in content_lower for kw in ["用户关系", "组织", "分工", "人际", "环境规律", "偏好", "习惯"]):
+            return "SocialEcology"
         
-        # 关键词匹配
-        if any(kw in content_lower for kw in ["skill", "代码", "coding", "实现", "修复", "bug"]):
+        # 4. CoreWork - 本职核心业务
+        if any(kw in content_lower for kw in ["skill", "代码", "coding", "实现", "修复", "bug", "开发", "架构", "设计", "核心工作"]):
             return "CoreWork"
         
-        if any(kw in content_lower for kw in ["交付", "接收", "协作", "agent", "来自"]):
-            return "CollabResult"
+        # 5. EventsOutside - 临时辅助、无重要成果
+        if any(kw in content_lower for kw in ["临时", "辅助", "帮忙", "简单", "游戏", "放松", "娱乐"]):
+            return "EventsOutside"
         
-        if any(kw in content_lower for kw in ["临时", "辅助", "帮忙", "简单"]):
-            return "AuxTask"
-        
-        if any(kw in content_lower for kw in ["规则", "规范", "红线", "纠正", "改进", "学习", "进化"]):
-            return "SelfEvolve"
-        
-        if any(kw in content_lower for kw in ["用户", "系统", "分工", "环境", "习惯", "偏好"]):
-            return "EnvAwareness"
-        
-        # 默认
-        if item_type in ["Decision", "Event"]:
+        # 默认：Event/To-do/Output 等核心工作相关 → CoreWork
+        if item_type in ["Event", "To-do", "Output"]:
             return "CoreWork"
         
-        return "AuxTask"
+        # 其他默认 EventsOutside
+        return "EventsOutside"
 
 
 # 便捷函数

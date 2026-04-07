@@ -147,7 +147,10 @@ class MessageProcessor:
                 d.pop('follow_up', None)
                 d.pop('outcome', None)
                 # 用 source_idx（1-based）从 cleaned_all 取对应 timestamp
+                # 支持单个整数或整数数组（取第一个）
                 src_idx = d.get('source_idx', 0)
+                if isinstance(src_idx, list):
+                    src_idx = src_idx[0] if src_idx else 0
                 if src_idx and 1 <= src_idx <= len(cleaned_all):
                     d['timestamp'] = cleaned_all[src_idx - 1].get('timestamp', '')
                 distilled_all.append(d)
@@ -178,10 +181,19 @@ class MessageProcessor:
             # 4.1 保存 clean_session（已清洗）
             clean_path = self._save_clean_session(chunk_messages, chunk_name)
 
-            # 4.2 筛选 source_idx 落在 [chunk_start, chunk_end) 的蒸馏项
+                        # 4.2 筛选 source_idx 落在 [chunk_start, chunk_end) 的蒸馏项
+            # 支持单个整数或整数数组（多消息融合场景）
+            def _in_chunk(item, cs, ce):
+                idx = item.get('source_idx')
+                if idx is None:
+                    return False
+                if isinstance(idx, list):
+                    return any(cs < i <= ce for i in idx)
+                return cs < idx <= ce
+
             chunk_items = [
                 item for item in distilled_all
-                if item.get('source_idx') and chunk_start < item['source_idx'] <= chunk_end
+                if _in_chunk(item, chunk_start, chunk_end)
             ]
 
             if not chunk_items:
