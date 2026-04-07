@@ -368,9 +368,51 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 ## 首次激活流程
 
 当用户说"请使用 memory-automation"时：
-1. Agent 执行 run_manual()
-2. 系统自动尝试从 OpenClaw 配置提取 API key
-3. 如果提取成功 → 直接使用，无需用户配置
-4. 如果提取失败 → 提示用户手动配置 API key
 
-**注意**：从 v2.2.0 起，移除了 Regex 降级功能。LLM 蒸馏失败时将返回空结果，需要检查 API key 配置。
+### 步骤 1：系统自动配置
+```
+[MemoryAutomation] 正在尝试自动配置...
+[SessionDistiller] 已从 OpenClaw (xiaoxian/minimax-portal:default) 提取 API key
+[MemoryAutomation] 配置就绪 (API key 来源: openclaw_default)
+```
+
+系统会自动尝试以下方式获取 API key：
+1. **环境变量** (`MINIMAX_API_KEY` 或 `MINIMAX_API_TOKEN`)
+2. **config.json** 中的 `llm.api_key`
+3. **OpenClaw 默认配置** (`~/.openclaw/agents/{agent}/agent/auth-profiles.json`)
+
+### 步骤 2：自动运行
+如果自动提取成功，系统直接开始蒸馏，**无需用户交互**。
+
+### 步骤 3：手动配置（仅在自动提取失败时）
+
+如果系统提示：
+```
+[MEMORY-AUTOMATION] API_KEY_NOT_CONFIGURED
+[SessionDistiller] 请先配置 LLM API key
+```
+
+用户需要手动配置：
+
+**方式 1：设置环境变量**
+```bash
+export MINIMAX_API_KEY="sk-xxx"
+```
+
+**方式 2：修改 config.json**
+```json
+{
+  "llm": {
+    "api_key": "sk-xxx"
+  }
+}
+```
+
+**方式 3：配置 OpenClaw 默认模型**
+确保 `~/.openclaw/agents/{agent}/agent/auth-profiles.json` 中有有效的 minimax 配置。
+
+### 注意事项
+
+- 从 v2.2.0 起，**移除了 Regex 降级功能**
+- LLM 蒸馏失败时将返回空结果
+- 系统会自动检测并提示 API key 问题

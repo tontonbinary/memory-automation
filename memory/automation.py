@@ -244,27 +244,30 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
     def _check_config_status(self) -> Dict[str, Any]:
         """
-        检查配置状态，返回是否就绪或 awaiting_confirmation
+        检查配置状态
+        
+        现在主要检查 API key 是否可用（支持自动提取）
 
         Returns:
-            {"ready": bool, "fallback": bool, "status": str, ...}
+            {"ready": bool, "status": str, "source": str, ...}
         """
-        is_complete, missing = self.reference_manager.is_complete()
+        is_complete, missing, status_detail = self.reference_manager.is_complete()
+        
         if is_complete:
-            return {"ready": True, "fallback": False}
+            return {
+                "ready": True,
+                "status": "ready",
+                "source": status_detail.get("api_key_source", "unknown"),
+                "message": f"配置就绪 (API key 来源: {status_detail.get('api_key_source', 'unknown')})"
+            }
 
-        # 检查是否已接受降级
-        state = self.reference_manager._load_state()
-        if state.get("fallback_accepted"):
-            return {"ready": True, "fallback": True}
-
+        # API key 不可用
         missing_str = ", ".join(missing)
         return {
             "ready": False,
-            "fallback": False,
-            "status": "awaiting_confirmation",
-            "config_status": self.reference_manager.get_config_status(),
-            "message": f"配置不完整（缺失: {missing_str}），蒸馏质量将下降，是否继续？"
+            "status": "api_key_required",
+            "config_status": status_detail,
+            "message": f"需要配置 {missing_str}。系统已尝试自动提取但未成功，请手动配置。"
         }
 
     def write_activation_flag(self, message: str = "Mauto 需要激活，请运行 'mauto activate' 或让用户触发一次 Mauto") -> Path:
@@ -554,18 +557,15 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
             "pattern_detected": None  # 实时模式检测结果
         }
 
-        # 配置检查（新模式：等待确认）
+        # 配置检查（自动提取 API key）
         config_status = self._check_config_status()
         if not config_status["ready"]:
-            result["status"] = "awaiting_confirmation"
+            result["status"] = "api_key_required"
             result["config_status"] = config_status["config_status"]
             result["reason"] = config_status["message"]
             return result
-
-        # 如果接受降级，关闭 LLM 蒸馏
-        if config_status.get("fallback"):
-            print("[MemoryAutomation] 配置不完整，使用 regex 降级蒸馏")
-            self.distiller.llm_config["enabled"] = False
+        
+        print(f"[MemoryAutomation] {config_status['message']}")
 
         # 如果指定了 session_file，直接处理该文件
         if session_file:
@@ -711,18 +711,15 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         # 首次运行检查：确保 heartbeat 文件存在
         self._ensure_heartbeat_file()
 
-        # 配置检查（新模式：等待确认）
+        # 配置检查（自动提取 API key）
         config_status = self._check_config_status()
         if not config_status["ready"]:
-            result["status"] = "awaiting_confirmation"
+            result["status"] = "api_key_required"
             result["config_status"] = config_status["config_status"]
             result["reason"] = config_status["message"]
             return result
-
-        # 如果接受降级，关闭 LLM 蒸馏
-        if config_status.get("fallback"):
-            print("[MemoryAutomation] 配置不完整，使用 regex 降级蒸馏")
-            self.distiller.llm_config["enabled"] = False
+        
+        print(f"[MemoryAutomation] {config_status['message']}")
 
         # 获取当前会话（只获取新消息）
         session_key, messages, last_msg_id = self.get_current_session()
