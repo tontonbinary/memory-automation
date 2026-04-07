@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "agent_id": "mautoer",
+  "processed": {
+    "/Users/binary/.openclaw/agents/mautoer/sessions/c02d7534-fb7e-4f84-9186-1c0b9a2713b9.jsonl": {
+      "file": "/Users/binary/.openclaw/agents/mautoer/sessions/c02d7534-fb7e-4f84-9186-1c0b9a2713b9.jsonl",
+      "processed_time": "2026-04-08T01:33:44.777567",
+      "msg_count": 7,
+      "distilled_items": 57
+    }
+  },
+  "skipped": {
+    "/Users/binary/.openclaw/agents/mautoer/sessions/651bbd4c-3856-4911-bc3b-832d1096162f.jsonl": {
+      "file": "/Users/binary/.openclaw/agents/mautoer/sessions/651bbd4c-3856-4911-bc3b-832d1096162f.jsonl",
+      "skipped_time": "2026-04-08T01:33:30.001557",
+      "reason": "消息太少",
+      "mtime": 1775583209.859508,
+      "size": 422633,
+      "line_count": 44
+    },
+    "/Users/binary/.openclaw/agents/mautoer/sessions/369d7638-b0a1-4b86-8bf2-bb5500df581d.jsonl": {
+      "file": "/Users/binary/.openclaw/agents/mautoer/sessions/369d7638-b0a1-4b86-8bf2-bb5500df581d.jsonl",
+      "skipped_time": "2026-04-08T01:33:30.001635",
+      "reason": "消息太少",
+      "mtime": 1775477080.444716,
+      "size": 902,
+      "line_count": 2
+    }
+  },
+  "last_scan_time": "2026-04-08T01:33:30.001422"
+}

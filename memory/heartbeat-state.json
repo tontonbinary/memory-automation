@@ -1,9 +1,9 @@
 {
-  "last_session_key": "agent:xiaoxian:feishu:direct:ou_faec4a36fcbe86eb186c4ae39752bf3e",
-  "last_processed_time": "2026-04-08T01:23:09.590334",
-  "last_distilled_messages": 31,
+  "last_session_key": "agent:mautoer:feishu:direct:ou_83d6abde1b37e26ebac7059a9bc12da3",
+  "last_processed_time": "2026-04-08T01:30:05.489823",
+  "last_distilled_messages": 18,
   "version": "1.0.0",
-  "last_processed_msg_id": "8a0fc072",
+  "last_processed_msg_id": "6a2de638",
   "pending_queue": [],
   "processing_old_session_key": null,
   "processing_old_session_started_at": null,

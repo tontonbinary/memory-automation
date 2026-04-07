@@ -107,13 +107,6 @@
   "entry_point": "memory/automation.py",
   "agent_self_distill": true,
   "l1_template": "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md",
-  "output": {
-    "l1_dir": "/Users/binary/mauto-test/test_output/L1",
-    "l2_dir": "/Users/binary/mauto-test/test_output/L2",
-    "l3_dir": "/Users/binary/mauto-test/test_output/L3",
-    "clean_session_dir": "/Users/binary/mauto-test/test_output/clean_session",
-    "l1_template": "/Users/binary/mauto-test/test_output/L1/{date}.md"
-  },
   "session_processing": {
     "process_inactive": true,
     "max_age_days": 3,

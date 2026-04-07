@@ -442,10 +442,23 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         if not items:
             return ""
         
-        # 获取今天的 L1 文件路径
-        from datetime import datetime
-        today = datetime.now().strftime("%Y-%m-%d")
-        l1_file = f"~/.openclaw/workspaces/{self.agent_id}/workspace/memory/{today}.md"
+        # 获取 L1 文件路径（优先使用 item 中的 session_date，否则使用当前日期）
+        # item 中的 timestamp 格式："2026-03-25T06:31:15.487Z" 或 "2026-03-25T14:31:15+08:00"
+        date_str = None
+        for item in items:
+            ts = item.get('timestamp', '')
+            if ts and len(ts) >= 10:
+                date_str = ts[:10]  # 提取 YYYY-MM-DD
+                break
+        
+        if not date_str:
+            from datetime import datetime
+            date_str = datetime.now().strftime("%Y-%m-%d")
+        
+        # 获取 L1 路径模板
+        l1_template = self.config.get("output", {}).get("l1_template",
+            "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md")
+        l1_file = l1_template.format(agent=self.agent_id, date=date_str)
         l1_file_expanded = os.path.expanduser(l1_file)
         
         # 统计各类型数量
