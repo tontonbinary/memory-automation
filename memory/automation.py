@@ -1253,6 +1253,20 @@ def _handle_l3_command(args: list) -> dict:
     if subcmd == "promote":
         writer = L3Writer(agent_id=agent_id)
         result = writer.run_promotion(dry_run=dry_run)
+        
+        if result.get("disabled"):
+            print("\n[L3 Promote]")
+            print("  状态: 已禁用")
+            print("  说明: L2→L3 自动提升功能当前已关闭")
+            print("  原因: 等待重新设计更好的提升逻辑")
+            print("  预留接口: add_entry() 可用于手动添加条目")
+            return {
+                "success": True,
+                "action": "l3_promote",
+                "disabled": True,
+                "message": "L2→L3 promotion is disabled, will be redesigned"
+            }
+        
         return {
             "success": True,
             "action": "l3_promote",

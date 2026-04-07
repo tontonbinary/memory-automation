@@ -1,52 +1,37 @@
 """
-L3 写入模块 - 长期记忆管理
+L3 写入模块 - 长期记忆管理（接口预留版）
 
-负责将 verified insights 和稳定 patterns 提升到 L3 (~/self-improving/memory.md)
+L3 存储位置: ~/self-improving/memory.md
+
+注意：L2→L3 自动提升功能已禁用，仅保留接口供将来重新设计实现
 """
 
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set
-
-from .l2_extraction import get_insights, get_patterns, L2_DIR
+from typing import Dict, List, Optional
 
 
 class L3Writer:
     """
-    L3 长期记忆写入器
+    L3 长期记忆写入器（接口预留）
     
-    L3 存储位置: ~/self-improving/memory.md
-    
-    结构：
-    - Verified Insights: 已验证的原则（来自 insights.md）
-    - Consolidated Patterns: 稳定的行为模式（来自 patterns.md）
-    - Archive: 归档内容
+    当前状态：L2→L3 自动提升已禁用，仅提供基础文件操作接口
+    TODO: 重新设计 L1/L2 → L3 的提升逻辑
     """
     
     DEFAULT_L3_PATH = "~/self-improving/memory.md"
-    
-    # 升级阈值配置
-    THRESHOLDS = {
-        "insight_verified": {"min_count": 3, "min_days": 7},
-        "pattern_stable": {"min_count": 5, "min_days": 30},
-        "l1_tag": {"min_count": 7, "min_days": 7}
-    }
     
     def __init__(self, agent_id: str, l3_path: Optional[str] = None):
         """
         初始化 L3 写入器
         
         Args:
-            agent_id: Agent ID（必需，用于检查 L2 数据）
+            agent_id: Agent ID
             l3_path: 可选的自定义 L3 路径
         """
-        if not agent_id:
-            raise ValueError("agent_id 是必需的")
-        
         self.agent_id = agent_id
         self.l3_path = Path(l3_path or self.DEFAULT_L3_PATH).expanduser()
-        self.l2_dir = Path(L2_DIR.format(agent_id=agent_id)).expanduser()
         
         # 确保目录存在
         self.l3_path.parent.mkdir(parents=True, exist_ok=True)
@@ -81,205 +66,100 @@ class L3Writer:
         self.l3_path.write_text(content, encoding='utf-8')
         return content
     
-    def _parse_date(self, date_str: str) -> Optional[datetime]:
-        """解析日期字符串"""
-        formats = ["%Y-%m-%d", "%Y-%m-%d %H:%M"]
-        for fmt in formats:
-            try:
-                return datetime.strptime(date_str, fmt)
-            except ValueError:
-                continue
-        return None
-    
-    def _days_since(self, date_str: str) -> int:
-        """计算从日期到现在经过的天数"""
-        dt = self._parse_date(date_str)
-        if not dt:
-            return 0
-        return (datetime.now() - dt).days
-    
-    def check_insight_promotable(self, insight: dict) -> tuple[bool, str]:
+    def get_status(self) -> dict:
         """
-        检查 insight 是否可以提升到 L3
+        获取 L3 文件状态
         
         Returns:
-            (是否可以提升, 原因)
+            {"exists": bool, "path": str, "entry_count": int}
         """
-        status = insight.get('status', '')
-        if status != 'verified':
-            return False, f"status={status} (需要 verified)"
+        exists = self.l3_path.exists()
+        entry_count = 0
         
-        created = insight.get('created', '')
-        days = self._days_since(created)
-        min_days = self.THRESHOLDS["insight_verified"]["min_days"]
+        if exists:
+            content = self.l3_path.read_text(encoding='utf-8')
+            # 简单统计 ### 开头的条目数
+            entry_count = len(re.findall(r'^### ', content, re.MULTILINE))
         
-        if days < min_days:
-            return False, f"仅 {days} 天 (需要 >= {min_days} 天)"
-        
-        return True, f"符合提升条件 ({days} 天)"
+        return {
+            "exists": exists,
+            "path": str(self.l3_path),
+            "entry_count": entry_count
+        }
     
-    def check_pattern_promotable(self, pattern: dict) -> tuple[bool, str]:
-        """检查 pattern 是否可以提升到 L3"""
-        count = pattern.get('count', 0)
-        min_count = self.THRESHOLDS["pattern_stable"]["min_count"]
-        
-        if count < min_count:
-            return False, f"count={count} (需要 >= {min_count})"
-        
-        created = pattern.get('created', '')
-        days = self._days_since(created)
-        min_days = self.THRESHOLDS["pattern_stable"]["min_days"]
-        
-        if days < min_days:
-            return False, f"仅 {days} 天 (需要 >= {min_days} 天)"
-        
-        return True, f"符合提升条件 (count={count}, {days} 天)"
-    
-    def _section_exists(self, content: str, title: str) -> bool:
-        """检查 L3 中是否已存在该条目"""
-        # 匹配 ### 标题
-        pattern = rf'### \d{{4}}-\d{{2}}-\d{{2}}: {re.escape(title)}\n'
-        return bool(re.search(pattern, content))
-    
-    def promote_insight(self, insight: dict, dry_run: bool = False) -> bool:
+    def add_entry(self, section: str, title: str, content_lines: List[str]) -> bool:
         """
-        将 insight 提升到 L3
+        添加条目到 L3（基础接口）
         
         Args:
-            insight: insight 字典
-            dry_run: 仅模拟，不实际写入
+            section: 章节名（如 "Verified Insights", "Consolidated Patterns"）
+            title: 条目标题
+            content_lines: 内容行列表
+            
+        Returns:
+            是否成功
         """
-        can_promote, reason = self.check_insight_promotable(insight)
-        if not can_promote:
-            print(f"  [跳过] {insight.get('title', 'Unknown')}: {reason}")
-            return False
-        
-        title = insight.get('title', '')
-        principle = insight.get('principle', '')
-        created = insight.get('created', datetime.now().strftime('%Y-%m-%d'))
-        
-        if dry_run:
-            print(f"  [模拟提升] {title}")
-            return True
-        
         # 确保结构
-        content = self._ensure_l3_structure()
+        l3_content = self._ensure_l3_structure()
         
         # 检查是否已存在
-        if self._section_exists(content, title):
-            print(f"  [已存在] {title}")
+        if re.search(rf'^### .*?: {re.escape(title)}$', l3_content, re.MULTILINE):
             return False
         
         # 构建条目
-        entry = f"""### {datetime.now().strftime('%Y-%m-%d')}: {title}
-- **来源**: insights.md (verified)
-- **原则**: {principle}
-- **置信度**: high
-- **首次记录**: {created}
-- **验证日期**: {datetime.now().strftime('%Y-%m-%d')}
-
-"""
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        entry_lines = [f"### {date_str}: {title}"]
+        entry_lines.extend(content_lines)
+        entry_lines.append("")
+        entry_text = "\n".join(entry_lines)
         
-        # 插入到 Verified Insights 章节
-        content = self.l3_path.read_text(encoding='utf-8')
-        section_marker = "## Verified Insights\n"
-        pos = content.find(section_marker)
+        # 插入到指定章节
+        section_marker = f"## {section}\n"
+        pos = l3_content.find(section_marker)
         if pos >= 0:
             insert_pos = pos + len(section_marker)
-            new_content = content[:insert_pos] + "\n" + entry + content[insert_pos:]
+            new_content = l3_content[:insert_pos] + "\n" + entry_text + l3_content[insert_pos:]
             self.l3_path.write_text(new_content, encoding='utf-8')
-            print(f"  [已提升] {title}")
             return True
         
         return False
     
-    def promote_pattern(self, pattern: dict, dry_run: bool = False) -> bool:
-        """将 pattern 提升到 L3"""
-        can_promote, reason = self.check_pattern_promotable(pattern)
-        if not can_promote:
-            print(f"  [跳过] {pattern.get('key', 'Unknown')}: {reason}")
-            return False
-        
-        key = pattern.get('key', '')
-        description = pattern.get('description', '')
-        count = pattern.get('count', 0)
-        created = pattern.get('created', datetime.now().strftime('%Y-%m-%d'))
-        
-        if dry_run:
-            print(f"  [模拟提升] {key}")
-            return True
-        
-        content = self._ensure_l3_structure()
-        
-        if self._section_exists(content, key):
-            print(f"  [已存在] {key}")
-            return False
-        
-        entry = f"""### {datetime.now().strftime('%Y-%m-%d')}: {key}
-- **来源**: patterns.md
-- **描述**: {description}
-- **出现次数**: {count}
-- **首次记录**: {created}
-- **稳定性**: {self._days_since(created)} 天
-- **标签**: #{key}
-
-"""
-        
-        content = self.l3_path.read_text(encoding='utf-8')
-        section_marker = "## Consolidated Patterns\n"
-        pos = content.find(section_marker)
-        if pos >= 0:
-            insert_pos = pos + len(section_marker)
-            new_content = content[:insert_pos] + "\n" + entry + content[insert_pos:]
-            self.l3_path.write_text(new_content, encoding='utf-8')
-            print(f"  [已提升] {key}")
-            return True
-        
-        return False
+    # ============================================================
+    # 以下接口已禁用（保留供将来重新实现）
+    # ============================================================
     
     def run_promotion(self, dry_run: bool = False) -> dict:
         """
-        运行完整的 L2→L3 提升流程
+        [已禁用] L2→L3 自动提升流程
+        
+        此功能当前已禁用，仅返回空结果。
+        将来会重新设计 L1/L2 → L3 的提升逻辑。
         
         Returns:
-            {"insights_promoted": int, "patterns_promoted": int}
+            {"insights_promoted": 0, "patterns_promoted": 0, "disabled": True}
         """
-        print(f"\n{'='*60}")
-        print(f"[L2→L3] 开始提升检查")
-        print(f"  Agent: {self.agent_id}")
-        print(f"  L3 路径: {self.l3_path}")
-        print(f"  模式: {'模拟' if dry_run else '实际'}")
-        print(f"{'='*60}\n")
-        
-        # 确保结构
-        if not dry_run:
-            self._ensure_l3_structure()
-        
-        results = {"insights_promoted": 0, "patterns_promoted": 0}
-        
-        # 1. 提升 verified insights
-        print("[1/2] 检查 Verified Insights...")
-        insights = get_insights(self.agent_id, status='verified')
-        print(f"  找到 {len(insights)} 个 verified insights")
-        
-        for insight in insights:
-            if self.promote_insight(insight, dry_run=dry_run):
-                results["insights_promoted"] += 1
-        
-        # 2. 提升稳定 patterns
-        print("\n[2/2] 检查稳定 Patterns...")
-        patterns = get_patterns(self.agent_id)
-        print(f"  找到 {len(patterns)} 个 patterns")
-        
-        for pattern in patterns:
-            if self.promote_pattern(pattern, dry_run=dry_run):
-                results["patterns_promoted"] += 1
-        
-        # 总结
-        print(f"\n{'='*60}")
-        print(f"[L2→L3] 完成")
-        print(f"  Insights 提升: {results['insights_promoted']}")
-        print(f"  Patterns 提升: {results['patterns_promoted']}")
-        print(f"{'='*60}\n")
-        
-        return results
+        print("[L3Writer] L2→L3 自动提升已禁用，等待重新设计")
+        return {
+            "insights_promoted": 0,
+            "patterns_promoted": 0,
+            "disabled": True,
+            "message": "L2→L3 promotion is disabled, will be redesigned"
+        }
+    
+    def check_insight_promotable(self, insight: dict) -> tuple:
+        """[已禁用] 检查 insight 是否可提升"""
+        return False, "Function disabled"
+    
+    def check_pattern_promotable(self, pattern: dict) -> tuple:
+        """[已禁用] 检查 pattern 是否可提升"""
+        return False, "Function disabled"
+    
+    def promote_insight(self, insight: dict, dry_run: bool = False) -> bool:
+        """[已禁用] 提升 insight 到 L3"""
+        print("[L3Writer] promote_insight is disabled")
+        return False
+    
+    def promote_pattern(self, pattern: dict, dry_run: bool = False) -> bool:
+        """[已禁用] 提升 pattern 到 L3"""
+        print("[L3Writer] promote_pattern is disabled")
+        return False
