@@ -98,13 +98,25 @@ class L1Writer:
         return last_tz
 
     def _format_l1_entry(self, item: Dict[str, Any], line_number: int = 0,
-                         entry_time: str = None) -> str:
-        """格式化为 L1 存储格式"""
+                         entry_time: str = None, day_offset: int = 0) -> str:
+        """
+        格式化为 L1 存储格式
+        
+        Args:
+            day_offset: 相对于文件日期的天数偏移（0=当天，1=次日，-1=前一天）
+        """
         if entry_time is None:
             entry_time = datetime.now().strftime("%H:%M")
+        
+        # 跨日标注：(+1) 表示次日
+        time_display = entry_time
+        if day_offset > 0:
+            time_display = f"{entry_time} (+{day_offset})"
+        elif day_offset < 0:
+            time_display = f"{entry_time} ({day_offset})"
 
         lines = [
-            f"## {entry_time}",
+            f"## {time_display}",
             f"### {item['item_type'].capitalize()}",
             f"- **内容**：{item['content']}",
         ]
@@ -190,18 +202,34 @@ class L1Writer:
             start_line = len(existing_content.splitlines()) + 1
             file_last_tz = self._detect_last_timezone_change(existing_content)
 
-        # 解析每条的时间（HH:MM 和时区标签）
+        # 解析每条的时间（HH:MM 和时区标签），并检测跨日
         parsed_items = []
         current_batch_tz = current_tz
         tz_change_inserted = False
+        
+        # 文件基准日期
+        file_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        
         for idx, item in enumerate(items):
             raw_ts = item_times[idx] if has_item_times else ''
             tz_label, time_display = self._parse_timestamp(raw_ts)
+            
+            # 计算日期偏移（检测跨日）
+            day_offset = 0
+            if raw_ts and len(raw_ts) >= 10:
+                try:
+                    msg_date_str = raw_ts[:10]  # "2026-04-09"
+                    msg_date = datetime.strptime(msg_date_str, "%Y-%m-%d").date()
+                    day_offset = (msg_date - file_date).days  # 0, 1, -1, etc.
+                except:
+                    pass
+            
             parsed_items.append({
                 'item': item,
                 'tz': tz_label,
                 'time_display': time_display,
-                'raw_ts': raw_ts
+                'raw_ts': raw_ts,
+                'day_offset': day_offset
             })
             # 检查本批次内是否有时区变化
             if idx == 0:
@@ -216,19 +244,31 @@ class L1Writer:
         for pi in parsed_items:
             item = pi['item']
             time_display = pi['time_display']
+            day_offset = pi['day_offset']
+            # 跨日标注在索引中
+            if day_offset > 0:
+                time_display = f"{time_display} (+{day_offset})"
+            elif day_offset < 0:
+                time_display = f"{time_display} ({day_offset})"
+            
             item_type = item.get('item_type', '')
             tags_str = " ".join([f"#{tag}" for tag in item.get("tags", [])]) if item.get("tags") else "-"
             event_type = item.get('event_type', item['item_type'])
             new_index_lines.append(f"| {time_display} | {item_type} | {event_type} | {tags_str} |")
             item['session_date'] = date_str
 
-        # 构建完整日志条目（带时区变更标注）
+        # 构建完整日志条目（带跨日标注）
         new_log_entries = []
         for idx, pi in enumerate(parsed_items):
             item = pi['item']
             time_display = pi['time_display']
-            tz_label = pi['tz']
-            entry = self._format_l1_entry(item, start_line + len(new_index_lines) + idx, time_display)
+            day_offset = pi['day_offset']
+            entry = self._format_l1_entry(
+                item, 
+                start_line + len(new_index_lines) + idx, 
+                time_display,
+                day_offset=day_offset
+            )
             new_log_entries.append(entry)
 
         # 是否需要时区变更标记（本批次第一个时区 ≠ 文件最后一个时区）
@@ -355,3 +395,37 @@ class L1Writer:
             json.dump(queue_data, f, ensure_ascii=False, indent=2)
 
         return queue_path
+
+    def mark_l3_consolidated(self, date_str: str, count: int = 0):
+        """
+        标记 L1 文件已被 L3 整合
+        
+        Args:
+            date_str: 日期字符串 (YYYY-MM-DD)
+            count: 整合的条目数
+        """
+        l1_path = self._get_l1_path(date_str)
+        if not l1_path.exists():
+            return False
+        
+        try:
+            content = l1_path.read_text(encoding='utf-8')
+            
+            # 检查是否已有标记
+            if "<!-- l3_consolidated:" in content:
+                # 更新现有标记
+                content = re.sub(
+                    r'<!-- l3_consolidated: [^;]+; count=\d+',
+                    f'<!-- l3_consolidated: {datetime.now().isoformat()}; count={count}',
+                    content
+                )
+            else:
+                # 添加新标记（在文件末尾）
+                marker = f"\n\n<!-- l3_consolidated: {datetime.now().isoformat()}; count={count}; agent={self.agent_id} -->\n"
+                content += marker
+            
+            l1_path.write_text(content, encoding='utf-8')
+            return True
+        except Exception as e:
+            print(f"[L1Writer] 标记 L3 整合失败 {date_str}: {e}")
+            return False

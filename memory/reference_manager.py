@@ -137,20 +137,18 @@ class ReferenceManager:
         """尝试从 OpenClaw 配置提取 API key"""
         try:
             home = Path.home()
-            possible_agents = ["xiaoxian", "code", "main", "TS", self.agent_id]
-            
-            for agent in possible_agents:
-                auth_file = home / ".openclaw" / "agents" / agent / "agent" / "auth-profiles.json"
-                if auth_file.exists():
-                    with open(auth_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    
-                    profiles = data.get("profiles", {})
-                    for profile_name, profile in profiles.items():
-                        if "minimax" in profile_name.lower():
-                            token = profile.get("access") or profile.get("key")
-                            if token:
-                                return token
+            # 只使用当前 agent_id，禁止硬编码其他 agent 名称
+            auth_file = home / ".openclaw" / "agents" / self.agent_id / "agent" / "auth-profiles.json"
+            if auth_file.exists():
+                with open(auth_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                profiles = data.get("profiles", {})
+                for profile_name, profile in profiles.items():
+                    if "minimax" in profile_name.lower():
+                        token = profile.get("access") or profile.get("key")
+                        if token:
+                            return token
                     
                     # 尝试任何可用 key
                     for profile in profiles.values():

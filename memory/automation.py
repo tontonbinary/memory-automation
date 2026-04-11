@@ -22,8 +22,10 @@ from .message_processor import MessageProcessor
 from .pattern_detector import PatternDetector
 from .session_distiller import SessionDistiller
 from .l1_writer import L1Writer
+from .l1_reader import L1Reader, L1Data
 from .reference_manager import ReferenceManager
 from .processed_sessions_tracker import ProcessedSessionsTracker
+from .l3_consolidator import L3Consolidator
 
 
 class MemoryAutomation:
@@ -673,14 +675,27 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         Returns:
             处理结果
         """
-        # 静默时段检查：避开 Auto-Dream 运行时间 (03:55-04:10)
+        # 静默时段检查
         from datetime import datetime
         now = datetime.now()
-        if (now.hour == 4 and now.minute < 10) or (now.hour == 3 and now.minute >= 55):
-            return {
-                "triggered": False,
-                "reason": "当前处于静默时段（03:55-04:10），建议稍后再试"
-            }
+        l3_config = self.config.get("l3_consolidation", {})
+        silent_hours = l3_config.get("silent_hours", {})
+        
+        if silent_hours.get("enabled", True):
+            sh_start_hour = silent_hours.get("start_hour", 3)
+            sh_start_minute = silent_hours.get("start_minute", 55)
+            sh_end_hour = silent_hours.get("end_hour", 4)
+            sh_end_minute = silent_hours.get("end_minute", 10)
+            
+            current_minutes = now.hour * 60 + now.minute
+            silent_start = sh_start_hour * 60 + sh_start_minute
+            silent_end = sh_end_hour * 60 + sh_end_minute
+            
+            if silent_start <= current_minutes <= silent_end:
+                return {
+                    "triggered": False,
+                    "reason": f"当前处于静默时段（{sh_start_hour:02d}:{sh_start_minute:02d}-{sh_end_hour:02d}:{sh_end_minute:02d}），建议稍后再试"
+                }
 
         # 无 agent_id → 报错提示
         if not self.agent_id:
@@ -832,19 +847,27 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         Returns:
             处理结果
         """
-        # 时间窗口检查：避开 Auto-Dream 运行时间 (03:55-04:10)
+        # 静默时段检查
         from datetime import datetime
         now = datetime.now()
-        if now.hour == 4 and now.minute < 10:
-            return {
-                "triggered": False,
-                "reason": "跳过执行：避开 Auto-Dream 运行时间窗口 (03:55-04:10)"
-            }
-        if now.hour == 3 and now.minute >= 55:
-            return {
-                "triggered": False,
-                "reason": "跳过执行：避开 Auto-Dream 运行时间窗口 (03:55-04:10)"
-            }
+        l3_config = self.config.get("l3_consolidation", {})
+        silent_hours = l3_config.get("silent_hours", {})
+        
+        if silent_hours.get("enabled", True):
+            sh_start_hour = silent_hours.get("start_hour", 3)
+            sh_start_minute = silent_hours.get("start_minute", 55)
+            sh_end_hour = silent_hours.get("end_hour", 4)
+            sh_end_minute = silent_hours.get("end_minute", 10)
+            
+            current_minutes = now.hour * 60 + now.minute
+            silent_start = sh_start_hour * 60 + sh_start_minute
+            silent_end = sh_end_hour * 60 + sh_end_minute
+            
+            if silent_start <= current_minutes <= silent_end:
+                return {
+                    "triggered": False,
+                    "reason": f"跳过执行：避开 Auto-Dream 运行时间窗口 ({sh_start_hour:02d}:{sh_start_minute:02d}-{sh_end_hour:02d}:{sh_end_minute:02d})"
+                }
 
         # 无 agent_id → 跳过执行，写入激活标记
         if not self.agent_id:
@@ -910,15 +933,48 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
             else:
                 print(f"[MemoryAutomation] [Heartbeat] 旧 session 无遗漏消息或已全部处理")
         
-        # ===== 第二步：积压处理（无条件执行）=====
-        # Fix: #2 - 积压处理不应依赖当前 session 是否有消息
-        # 无论当前 session 是否有消息，都检查积压（每次最多处理1个）
-        print("[MemoryAutomation] [Heartbeat] 检查积压 session...")
-        backlog_result = self._check_and_process_backlog()
-        if backlog_result:
-            result["backlog_processed"] = backlog_result
+        # ===== 第二步：积压处理（当前 session 无消息时）=====
+        # 无论间隔时间是否到达，都检查积压（积压检查成本低）
+        if not messages:
+            print("[MemoryAutomation] [Heartbeat] 活跃 session 无新消息，检查积压...")
+            backlog_result = self._check_and_process_backlog()
+            if backlog_result:
+                result["backlog_processed"] = backlog_result
         
-        # ===== 第三步：检查活跃 session 处理间隔 =====
+        # ===== 第三步：L3 Auto-Dream 整合（时间窗口内执行）=====
+        # 检查是否在 L3 运行窗口
+        now = datetime.now()
+        l3_config = self.config.get("l3_consolidation", {})
+        time_window = l3_config.get("time_window", {})
+        start_hour = time_window.get("start_hour", 4)
+        start_minute = time_window.get("start_minute", 0)
+        end_hour = time_window.get("end_hour", 5)
+        end_minute = time_window.get("end_minute", 0)
+        
+        # 计算当前时间是否在窗口内
+        current_minutes = now.hour * 60 + now.minute
+        start_minutes = start_hour * 60 + start_minute
+        end_minutes = end_hour * 60 + end_minute
+        
+        is_l3_window = start_minutes <= current_minutes <= end_minutes
+        
+        if l3_config.get("enabled", True) and is_l3_window:
+            print("[MemoryAutomation] [Heartbeat] 进入 L3 整合窗口，执行记忆整合...")
+            try:
+                l3_consolidator = L3Consolidator(self.agent_id, self.config)
+                l3_result = l3_consolidator.run_consolidation()
+                result["l3_consolidated"] = {
+                    "success": l3_result.get("success", False),
+                    "new_entries": l3_result.get("new_entries", 0),
+                    "has_report": bool(l3_result.get("report"))
+                }
+                if l3_result.get("report"):
+                    print(f"\n{l3_result['report']}\n")
+            except Exception as e:
+                print(f"[MemoryAutomation] [Heartbeat] L3 整合异常: {e}")
+                result["l3_consolidated"] = {"success": False, "error": str(e)}
+        
+        # ===== 第四步：检查活跃 session 处理间隔 =====
         interval = self.config.get("heartbeat_interval_minutes", 30)
         should_process, reason = self.session_manager.check_should_process(
             session_key, interval
@@ -1347,14 +1403,17 @@ def main():
     # 解析可选参数
     session_file = None
     agent_id = None
+    config_path = None
     for i in range(2, len(sys.argv)):
         if sys.argv[i] == "--session" and i + 1 < len(sys.argv):
             session_file = sys.argv[i + 1]
         elif sys.argv[i] == "--agent" and i + 1 < len(sys.argv):
             agent_id = sys.argv[i + 1]
+        elif sys.argv[i] == "--config" and i + 1 < len(sys.argv):
+            config_path = sys.argv[i + 1]
 
     # 创建自动化实例
-    automation = MemoryAutomation(agent_id=agent_id)
+    automation = MemoryAutomation(agent_id=agent_id, config_path=config_path)
 
     if mode == "manual":
         # 手动模式 - 可以尝试从环境变量获取用户消息

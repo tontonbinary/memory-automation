@@ -278,14 +278,14 @@ __SESSION_CONTENT__
     def _extract_openclaw_api_key(self) -> Optional[str]:
         """从 OpenClaw 配置自动提取 API key"""
         try:
-            # 尝试读取默认 agent 的 auth-profiles
             home = Path.home()
             
-            # 尝试多个可能的 agent 目录
-            possible_agents = ["xiaoxian", "code", "main", "TS"]
+            # 注意：禁止硬编码 agent 名称，只尝试通过配置文件或环境变量获取
+            # 从 config.json 中读取 agent_id（如果配置中有）
+            agent_id = self.config.get("agent_id") or os.environ.get("OPENCLAW_AGENT_ID")
             
-            for agent in possible_agents:
-                auth_file = home / ".openclaw" / "agents" / agent / "agent" / "auth-profiles.json"
+            if agent_id:
+                auth_file = home / ".openclaw" / "agents" / agent_id / "agent" / "auth-profiles.json"
                 if auth_file.exists():
                     with open(auth_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
@@ -297,14 +297,14 @@ __SESSION_CONTENT__
                         if "minimax" in profile_name.lower():
                             token = profile.get("access") or profile.get("key")
                             if token:
-                                print(f"[SessionDistiller] 已从 OpenClaw ({agent}/{profile_name}) 提取 API key")
+                                print(f"[SessionDistiller] 已从 OpenClaw ({agent_id}/{profile_name}) 提取 API key")
                                 return token
                     
                     # 其次查找任何 API key
                     for profile_name, profile in profiles.items():
                         token = profile.get("access") or profile.get("key")
-                        if token and len(token) > 20:  # 简单验证长度
-                            print(f"[SessionDistiller] 已从 OpenClaw ({agent}/{profile_name}) 提取 API key")
+                        if token and len(token) > 20:
+                            print(f"[SessionDistiller] 已从 OpenClaw ({agent_id}/{profile_name}) 提取 API key")
                             return token
             
             # 尝试 openclaw.json
