@@ -45,8 +45,8 @@ class ReferenceManager:
         self.memory_dir = Path(f"~/.openclaw/workspaces/{agent_id}/workspace/memory").expanduser()
     
     def _get_default_state_path(self) -> str:
-        """获取默认状态文件路径"""
-        return f"~/.openclaw/skills/memory-automation/memory/heartbeat-state.json"
+        """获取默认状态文件路径（per-agent 隔离）"""
+        return f"~/.openclaw/agents/{self.agent_id}/memory/heartbeat-state.json"
     
     def _load_state(self) -> Dict:
         """加载 heartbeat-state.json"""
