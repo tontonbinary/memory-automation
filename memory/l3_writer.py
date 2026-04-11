@@ -1,9 +1,11 @@
 """
-L3 写入模块 - 长期记忆管理（接口预留版）
+L3 写入模块 - 长期记忆管理
 
-L3 存储位置: ~/self-improving/memory.md
+L3 存储位置: ~/.openclaw/workspaces/{agent}/workspace/MEMORY.md
 
-注意：L2→L3 自动提升功能已禁用，仅保留接口供将来重新设计实现
+功能：
+1. 基础 L3 文件操作
+2. 与 L3Consolidator 配合完成 L1→L3 整合
 """
 
 import re
@@ -14,13 +16,15 @@ from typing import Dict, List, Optional
 
 class L3Writer:
     """
-    L3 长期记忆写入器（接口预留）
+    L3 长期记忆写入器
     
-    当前状态：L2→L3 自动提升已禁用，仅提供基础文件操作接口
-    TODO: 重新设计 L1/L2 → L3 的提升逻辑
+    配合 L3Consolidator 完成 L1→L3 整合流程
     """
     
-    DEFAULT_L3_PATH = "~/self-improving/memory.md"
+    @staticmethod
+    def get_l3_path(agent_id: str) -> Path:
+        """获取 L3 文件路径（agent 隔离）"""
+        return Path(f"~/.openclaw/workspaces/{agent_id}/workspace/MEMORY.md").expanduser()
     
     def __init__(self, agent_id: str, l3_path: Optional[str] = None):
         """
@@ -28,10 +32,10 @@ class L3Writer:
         
         Args:
             agent_id: Agent ID
-            l3_path: 可选的自定义 L3 路径
+            l3_path: 可选的自定义 L3 路径（默认使用 agent 隔离路径）
         """
         self.agent_id = agent_id
-        self.l3_path = Path(l3_path or self.DEFAULT_L3_PATH).expanduser()
+        self.l3_path = Path(l3_path) if l3_path else self.get_l3_path(agent_id)
         
         # 确保目录存在
         self.l3_path.parent.mkdir(parents=True, exist_ok=True)

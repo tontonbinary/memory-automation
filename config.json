@@ -99,11 +99,6 @@
     },
     "insight_ttl_days": 7
   },
-  "regex": {
-    "count": 0,
-    "count_asked": true
-  },
-  "fallback_to_regex": true,
   "entry_point": "memory/automation.py",
   "agent_self_distill": true,
   "l1_template": "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md",
@@ -112,5 +107,24 @@
     "max_age_days": 3,
     "min_message_count": 50,
     "process_order": "newest_first"
+  },
+  "l3_consolidation": {
+    "enabled": true,
+    "time_window": {
+      "start_hour": 4,
+      "start_minute": 0,
+      "end_hour": 5,
+      "end_minute": 0
+    },
+    "lookback_days": 7,
+    "stale_threshold_days": 14,
+    "backup_threshold_percent": 30,
+    "silent_hours": {
+      "enabled": true,
+      "start_hour": 3,
+      "start_minute": 55,
+      "end_hour": 4,
+      "end_minute": 10
+    }
   }
 }

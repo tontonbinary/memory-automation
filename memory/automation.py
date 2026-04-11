@@ -59,11 +59,17 @@ class MemoryAutomation:
             config=self.config
         )
 
-        # 从 heartbeat-state 读取 api_key 注入 distiller
+        # 从 heartbeat-state 读取 api_key 注入 distiller（备用方案）
         state = self.reference_manager._load_state()
         api_key = state.get("api_key", "")
+
+        # config.local.json 路径（SessionDistiller 需要直接读这个才能拿到 api_key）
+        skill_dir = Path(__file__).parent.parent
+        config_local = skill_dir / "config.local.json"
+
         self.distiller = SessionDistiller(
             min_message_length=self.config.get("distillation", {}).get("min_message_length", 10),
+            config_path=str(config_local),
             reference_manager=self.reference_manager
         )
         if api_key:

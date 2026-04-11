@@ -6,7 +6,7 @@ L1 Writer - L1 存储写入模块
 
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -181,12 +181,23 @@ class L1Writer:
         # 从第一条消息获取当前 session 的时区
         current_tz, _ = self._parse_timestamp(session_start_time if session_start_time else (item_times[0] if has_item_times else ""))
 
-        # 从第一条消息推断日期
+        # 从第一条消息推断日期（使用北京时间，避免 UTC 跨日问题）
+        BJ_TZ = timezone(timedelta(hours=8))
         date_str = datetime.now().strftime("%Y-%m-%d")
         if session_start_time:
-            date_str = session_start_time[:10]
+            try:
+                dt_utc = datetime.fromisoformat(session_start_time.replace('Z', '+00:00'))
+                dt_bj = dt_utc.astimezone(BJ_TZ)
+                date_str = dt_bj.strftime("%Y-%m-%d")
+            except:
+                date_str = session_start_time[:10]
         elif has_item_times and item_times[0]:
-            date_str = item_times[0][:10]
+            try:
+                dt_utc = datetime.fromisoformat(item_times[0].replace('Z', '+00:00'))
+                dt_bj = dt_utc.astimezone(BJ_TZ)
+                date_str = dt_bj.strftime("%Y-%m-%d")
+            except:
+                date_str = item_times[0][:10]
 
         l1_path = self._get_l1_path(date_str)
         l1_path.parent.mkdir(parents=True, exist_ok=True)
@@ -214,12 +225,14 @@ class L1Writer:
             raw_ts = item_times[idx] if has_item_times else ''
             tz_label, time_display = self._parse_timestamp(raw_ts)
             
-            # 计算日期偏移（检测跨日）
+            # 计算日期偏移（检测跨日，使用北京时间）
             day_offset = 0
             if raw_ts and len(raw_ts) >= 10:
                 try:
-                    msg_date_str = raw_ts[:10]  # "2026-04-09"
-                    msg_date = datetime.strptime(msg_date_str, "%Y-%m-%d").date()
+                    ts_clean = raw_ts.replace('Z', '+00:00')
+                    dt_utc = datetime.fromisoformat(ts_clean)
+                    dt_bj = dt_utc.astimezone(BJ_TZ)
+                    msg_date = dt_bj.date()
                     day_offset = (msg_date - file_date).days  # 0, 1, -1, etc.
                 except:
                     pass

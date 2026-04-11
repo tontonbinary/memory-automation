@@ -239,7 +239,7 @@ class MessageProcessor:
             print(f"[MessageProcessor] 处理旧文件: {old_file}")
 
             # 读取旧 session 的消息
-            messages = self.session_manager.read_session_messages(old_file)
+            messages, _ = self.session_manager._read_messages_from_session_file(old_file)
 
             if not messages:
                 print(f"[MessageProcessor] 旧文件无消息: {old_file}")
