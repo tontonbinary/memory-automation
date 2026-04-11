@@ -43,6 +43,13 @@ class ReferenceManager:
         self.agent_id = agent_id
         self.state_file = Path(state_file or self._get_default_state_path()).expanduser()
         self.memory_dir = Path(f"~/.openclaw/workspaces/{agent_id}/workspace/memory").expanduser()
+        
+        # 确保 state 文件目录存在（per-agent 隔离）
+        self._ensure_directory()
+    
+    def _ensure_directory(self) -> None:
+        """确保状态文件所在目录存在"""
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
     
     def _get_default_state_path(self) -> str:
         """获取默认状态文件路径（per-agent 隔离）"""
