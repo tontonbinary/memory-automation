@@ -106,6 +106,152 @@ class TagAnalyzer:
         
         return dict(tags)
     
+    def extract_selfevolve_entries(self, filepath: Path) -> List[Dict]:
+        """
+        从 L1 文件中提取事件类型为 SelfEvolve 的条目
+        
+        通过按顺序配对索引段和日志段来精确筛选，避免同一时间的多个条目混淆。
+        兼容多种 L1 文件格式。
+        
+        Args:
+            filepath: 记忆文件路径
+            
+        Returns:
+            SelfEvolve 条目列表，每条包含完整字段
+        """
+        entries = []
+        date_str = filepath.stem
+        
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except (IOError, UnicodeDecodeError) as e:
+            print(f"[TagAnalyzer] 读取文件失败 {filepath}: {e}")
+            return entries
+        
+        # 尝试多种分隔符定位索引段和日志段
+        parts = None
+        for sep in ["# ============================================", "\n---\n"]:
+            if sep in content:
+                parts = content.split(sep)
+                if len(parts) >= 3:
+                    break
+        
+        if not parts or len(parts) < 3:
+            # fallback: 按标题定位
+            if "# L1 标签索引" in content and "# L1 完整日志" in content:
+                idx_start = content.find("# L1 标签索引")
+                log_start = content.find("# L1 完整日志")
+                if idx_start < log_start:
+                    index_section = content[idx_start:log_start]
+                    log_section = content[log_start:]
+                else:
+                    return entries
+            else:
+                return entries
+        else:
+            index_section = parts[1] if len(parts) > 1 else ""
+            log_section = parts[2] if len(parts) > 2 else ""
+        
+        # 1. 解析索引段，收集所有条目（按顺序）
+        index_entries = []
+        for line in index_section.split("\n"):
+            line = line.strip()
+            if line.startswith("|") and not line.startswith("|------"):
+                cells = [c.strip() for c in line.split("|")[1:-1]]
+                if len(cells) >= 4:
+                    index_entries.append({
+                        "time": cells[0],
+                        "item_type": cells[1],
+                        "event_type": cells[2],
+                        "tags_str": cells[3]
+                    })
+        
+        # 2. 解析日志段，收集所有条目（按顺序）
+        log_entries = []
+        entry_blocks = re.split(r'\n## ', log_section)
+        for block in entry_blocks[1:]:
+            lines = block.strip().split("\n")
+            if not lines:
+                continue
+            
+            time = lines[0].strip()
+            content_text = ""
+            tags = []
+            source = ""
+            emotion = ""
+            improve = ""
+            action = ""
+            oput = ""
+            
+            for line in lines[1:]:
+                line = line.strip()
+                if line.startswith("- **内容**："):
+                    content_text = line[9:].strip()
+                elif line.startswith("- **情绪**："):
+                    emotion = line[9:].strip()
+                elif line.startswith("- **标签**："):
+                    tag_str = line[9:].strip().strip('`')
+                    tags = [t.strip('#') for t in tag_str.split() if t.startswith('#')]
+                elif line.startswith("- **来源**："):
+                    source = line[9:].strip()
+                elif line.startswith("- **后续行动**："):
+                    action = line[11:].strip()
+                elif line.startswith("- **成果**："):
+                    oput = line[8:].strip()
+                elif line.startswith("- **纠正**："):
+                    improve = line[8:].strip()
+            
+            if content_text:
+                log_entries.append({
+                    "time": time,
+                    "content": content_text,
+                    "tags": tags,
+                    "source": source,
+                    "emotion": emotion,
+                    "improve": improve,
+                    "action": action,
+                    "oput": oput,
+                })
+        
+        # 3. 按顺序配对，筛选 event_type == SelfEvolve
+        pair_count = min(len(index_entries), len(log_entries))
+        for i in range(pair_count):
+            if index_entries[i]["event_type"] == "SelfEvolve":
+                entry = log_entries[i].copy()
+                entry["date"] = date_str
+                entry["event_type"] = "SelfEvolve"
+                entries.append(entry)
+        
+        return entries
+    
+    def analyze_selfevolve_entries(self, days_back: int = 7) -> List[Dict]:
+        """
+        分析最近 N 天 L1 中的 SelfEvolve 条目
+        
+        Args:
+            days_back: 回溯天数
+            
+        Returns:
+            SelfEvolve 条目列表
+        """
+        files = self.find_memory_files(days_back)
+        if not files:
+            print(f"[TagAnalyzer] 未找到最近 {days_back} 天的记忆文件")
+            return []
+        
+        print(f"[TagAnalyzer] 分析 {len(files)} 个文件中的 SelfEvolve 条目...")
+        
+        all_entries = []
+        for filepath in files:
+            entries = self.extract_selfevolve_entries(filepath)
+            if entries:
+                print(f"[TagAnalyzer] {filepath.stem}: 发现 {len(entries)} 条 SelfEvolve")
+            all_entries.extend(entries)
+        
+        print(f"[TagAnalyzer] 总计 {len(all_entries)} 条 SelfEvolve 条目")
+        return all_entries
+    
     def analyze_tags(self, days_back: int = 7, min_occurrences: int = 3) -> Dict[str, dict]:
         """
         分析标签统计信息

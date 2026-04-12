@@ -20,7 +20,7 @@ class SessionManager:
         if state_file:
             self.state_file = Path(state_file).expanduser()
         else:
-            self.state_file = Path(f"~/.openclaw/agents/{agent_id}/memory/heartbeat-state.json").expanduser()
+            self.state_file = Path(f"~/.openclaw/workspaces/{agent_id}/workspace/memory/heartbeat-state.json").expanduser()
         self._ensure_directory()
 
     def _ensure_directory(self):

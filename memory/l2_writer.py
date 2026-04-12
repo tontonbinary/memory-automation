@@ -1,7 +1,11 @@
 """
 L2 写入模块 - 统一的 L2 写入接口
 
-现在 L2 统一使用三文件结构（corrections.md / patterns.md / insights.md）
+现在 L2 使用以下格式：
+- corrections.jsonl: 纠正记录（JSON Lines，兼容 self-improving-agent）
+- patterns.md: 行为模式（Markdown）
+- insights.md: 洞察原则（Markdown，由 Agent 手动维护）
+
 本模块提供兼容性封装，实际写入由 l2_extraction 处理
 """
 
@@ -15,6 +19,11 @@ from .l2_extraction import (
     get_corrections,
     get_patterns,
     get_insights,
+    # 新导出
+    get_correction_topics,
+    search_corrections,
+    get_high_frequency_corrections,
+    add_correction_legacy,  # 兼容旧接口
 )
 
 
@@ -22,10 +31,10 @@ class L2Writer:
     """
     L2 写入器 - 兼容层
     
-    实际写入操作委托给 l2_extraction 模块，确保统一使用三文件结构：
-    - corrections.md: 纠正记录
-    - patterns.md: 行为模式
-    - insights.md: 洞察原则
+    实际写入操作委托给 l2_extraction 模块：
+    - corrections.jsonl: 结构化 JSON Lines 格式
+    - patterns.md: Markdown 格式
+    - insights.md: Markdown 格式（Agent 手动维护）
     """
     
     def __init__(self, agent_id: str, l2_path: Optional[str] = None):
@@ -43,22 +52,64 @@ class L2Writer:
             raise ValueError("agent_id 是必需的，不能为空")
         self.agent_id = agent_id
     
-    def add_correction(self, content: str, source: str = "self", context: str = "") -> bool:
-        """添加纠正记录到 corrections.md"""
-        return add_correction(self.agent_id, content, source, context)
+    def add_correction(self, 
+                      topic: str, 
+                      wrong: str, 
+                      correct: str, 
+                      source: str = "self", 
+                      context: str = "") -> bool:
+        """
+        添加纠正记录到 corrections.jsonl
+        
+        Args:
+            topic: 纠正主题（如"代码风格"、"沟通方式"）
+            wrong: 错误做法
+            correct: 正确做法
+            source: 来源 (binary/self)
+            context: 场景上下文
+        
+        Returns:
+            是否成功写入
+        """
+        return add_correction(self.agent_id, topic, wrong, correct, source, context)
+    
+    def add_correction_simple(self, content: str, source: str = "self", context: str = "") -> bool:
+        """
+        [简化接口] 添加纠正记录（自动解析 content）
+        
+        尝试从 content 中解析 topic/wrong/correct，
+        如果解析失败，则存储为通用格式。
+        """
+        return add_correction_legacy(self.agent_id, content, source, context)
+    
+    def get_corrections(self, topic: str = None, limit: int = 50) -> List[Dict]:
+        """获取纠正记录列表"""
+        return get_corrections(self.agent_id, topic, limit)
+    
+    def get_correction_topics(self) -> List[str]:
+        """获取所有纠正主题"""
+        return get_correction_topics(self.agent_id)
+    
+    def search_corrections(self, keyword: str) -> List[Dict]:
+        """搜索纠正记录"""
+        return search_corrections(self.agent_id, keyword)
+    
+    def get_high_frequency_corrections(self, min_count: int = 3) -> List[Dict]:
+        """获取高频纠正记录（可用于提升到 patterns）"""
+        return get_high_frequency_corrections(self.agent_id, min_count)
     
     def add_pattern(self, pattern_key: str, description: str, examples: List[str] = None) -> bool:
         """添加/更新 pattern 到 patterns.md"""
         return add_or_update_pattern(self.agent_id, pattern_key, description, examples)
     
-    def add_insight(self, title: str, principle: str, status: str = "pending", 
-                   related_patterns: List[str] = None) -> bool:
-        """添加洞察到 insights.md"""
-        return add_insight(self.agent_id, title, principle, status, related_patterns)
-    
     def get_all_patterns(self) -> List[Dict]:
         """获取所有 patterns"""
         return get_patterns(self.agent_id)
+    
+    def add_insight(self, title: str, principle: str, status: str = "pending", 
+                   related_patterns: List[str] = None) -> bool:
+        """添加洞察到 insights.md（Agent 手动维护）"""
+        return add_insight(self.agent_id, title, principle, status, related_patterns)
     
     def get_all_insights(self, status: Optional[str] = None) -> List[Dict]:
         """获取所有 insights，可按状态过滤"""

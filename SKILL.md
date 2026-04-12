@@ -1,6 +1,7 @@
 # Memory Automation (Mauto) - Skill 操作指南
 
 > 本 Skill 实现 L0→L1→L2→L3 的完整记忆流转架构
+> L2 取消自动 insights 生成模块，insights 改由 Agent 主动调用 LLM 从 patterns 提炼后写入 insights.md
 
 ---
 
@@ -78,7 +79,9 @@ if matched_keywords:
     # 添加到 L2 corrections
     add_correction(
         agent_id=agent_id,
-        content=correction_content,
+        topic="general",
+        wrong=correction_content,
+        correct="[待明确]",
         source="binary",
         context=f"关键字: {', '.join(matched_keywords)}"
     )
@@ -124,9 +127,9 @@ Step 4: Active Session (条件: 不在静默时段)
 │       ├── {YYYY-MM-DD}.md         # L1 每日日志
 │       ├── l3-consolidation/        # L3 整合日志
 │       └── L2/                      # L2 自我改进层
-│           ├── corrections.md
+│           ├── corrections.jsonl
 │           ├── patterns.md
-│           └── insights.md
+│           └── insights.md          # Agent 手动维护
 └── memory/
     └── heartbeat-state.json         # 状态文件
 ```
@@ -154,12 +157,12 @@ Step 4: Active Session (条件: 不在静默时段)
 ## 6. CLI 命令（手动触发）
 
 ```bash
-# L1→L2 自动提升
-python -m memory.l1_to_l2 --agent {agent_id} --days 7 --min 3
+# L1→L2 自动提升（提取 SelfEvolve 到 corrections）
+python -m memory.l1_to_l2 --agent {agent_id} --days 7
 
 # L2 管理
-python -m memory.automation l2 correct --agent {agent_id} --content "..."
-python -m memory.automation l2 process --agent {agent_id}
+python -m memory.automation l2 correct --agent {agent_id} --topic "..." --wrong "..." --correct "..."
+python -m memory.automation l2 process --agent {agent_id} [--min 3] [--dry-run]
 python -m memory.automation l2 status --agent {agent_id}
 
 # L3 整合（手动触发）
@@ -171,11 +174,88 @@ python -m memory.automation heartbeat --agent {agent_id}
 
 ---
 
-## 7. 高级：重新处理已处理过的 Session
+## 7. Agent 主动提炼：Patterns → insights.md
+
+> `insights.py` 自动代码已移除，insights 不再由 Mauto 自动生成。
+> Agent **应当**在合适的时机（如用户要求总结、或 patterns 积累到一定数量时），主动读取 `patterns.md` 和 `corrections.jsonl`，通过 LLM 提炼为洞察原则，并写入 `insights.md`。
+
+### 7.1 何时触发
+- 用户说"总结一下我们的合作原则"
+- 用户说"你还记得我说过什么吗"
+- `patterns.md` 中积累了 5+ 条高置信度 pattern
+- 定期（如每周）主动回顾一次
+
+### 7.2 读取 L2 内容
+```python
+from memory.l2_extraction import get_patterns, get_corrections
+
+patterns = get_patterns(agent_id)
+corrections = get_corrections(agent_id, limit=20)
+
+# 筛选高置信度 patterns（可选）
+high_conf = [p for p in patterns if p.get("confidence", 0) >= 7]
+```
+
+### 7.3 LLM 提炼 Prompt
+
+**系统提示：**
+```
+你是一位记忆整理专家。你的任务是从 Agent 的纠正记录（corrections）和行为模式（patterns）中，提炼出简洁、可执行的洞察原则。
+
+输入格式：
+- corrections: JSON Lines 记录，包含 topic/wrong/correct/count
+- patterns: Markdown 记录，包含 pattern_key/description/count/confidence
+
+要求：
+1. 只提炼 **重复出现 2 次以上** 或 **高置信度（confidence ≥ 7）** 的模式
+2. 每条原则用一句话表达，结构为："在 [场景] 时，应当 [做法]，避免 [反例]。"
+3. 去除过于具体的一次性事件，保留可泛化的行为准则
+4. 如果多个 corrections 共享同一个 topic，合并为一条原则
+5. 输出格式为 JSON 数组：
+[
+  {
+    "title": "简短标题（如：代码风格偏好）",
+    "principle": "具体原则内容"
+  }
+]
+```
+
+**用户提示示例：**
+```
+请根据以下 patterns 和 corrections，提炼 3-5 条应写入 insights.md 的原则。
+
+Patterns:
+{{patterns_text}}
+
+Corrections:
+{{corrections_text}}
+```
+
+### 7.4 写入 insights.md
+```python
+from memory.l2_extraction import add_insight
+
+for item in llm_response:
+    add_insight(
+        agent_id=agent_id,
+        title=item["title"],
+        principle=item["principle"],
+        status="verified",  # 或 pending，视验证程度而定
+        related_patterns=[...]  # 可选：关联的 pattern keys
+    )
+```
+
+### 7.5 写入后清理（可选）
+- 如果某些 corrections 已经充分吸收到 insights.md，可以手动归档
+- patterns 保留作为原始证据，不建议删除
+
+---
+
+## 8. 高级：重新处理已处理过的 Session
 
 当需要**重新蒸馏**某个已处理过的 session 文件时（例如修正错误或补充遗漏）：
 
-### 7.1 CLI 方式
+### 8.1 CLI 方式
 ```bash
 # 指定 session 文件路径直接处理（绕过 processed-sessions 检查）
 python -m memory.automation manual \
@@ -183,7 +263,7 @@ python -m memory.automation manual \
     --session /path/to/session_file.jsonl
 ```
 
-### 7.2 Python API 方式
+### 8.2 Python API 方式
 ```python
 from memory.automation import MemoryAutomation
 
@@ -196,14 +276,14 @@ print(f"蒸馏项: {result['items_distilled']}")
 print(f"写入行: {result['lines_written']}")
 ```
 
-### 7.3 注意事项
+### 8.3 注意事项
 - **会重复写入 L1**：重新处理会再次追加到 L1 文件（如需清理旧条目，需手动编辑 L1）
 - **不会自动更新 tracker**：如需标记为已处理，需手动调用 `ProcessedSessionsTracker.mark_processed()`
 - **适用场景**：修复错误、补充遗漏、调整蒸馏策略后的重新处理
 
 ---
 
-## 8. 配置项 (config.json)
+## 9. 配置项 (config.json)
 
 ```json
 {

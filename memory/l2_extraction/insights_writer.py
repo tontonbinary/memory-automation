@@ -1,12 +1,14 @@
 """
-Insights Module - 顶层提炼
-从 patterns 中提炼出原则/洞察
-有 status 状态：pending -> verified -> abandoned
+Insights Writer Module - Agent 手动维护的 insights 写入层
+
+insights.md 不再由代码自动生成，改由 Agent 主动调用 LLM 从 patterns 提炼后写入。
+本模块仅提供基础读写接口。
 """
 
 import os
 from pathlib import Path
 from datetime import datetime
+from typing import List, Dict, Optional
 
 
 def get_l2_dir(agent_id: str) -> Path:
@@ -25,7 +27,7 @@ def ensure_l2_dir(agent_id: str):
 
 def add_insight(agent_id: str, title: str, principle: str, status: str = "pending", related_patterns: list = None):
     """
-    添加新的洞察
+    添加新的洞察到 insights.md（由 Agent 手动调用）
     
     Args:
         agent_id: agent 标识
@@ -42,8 +44,8 @@ def add_insight(agent_id: str, title: str, principle: str, status: str = "pendin
     if not insights_file.exists():
         header = """# Insights
 
-顶层提炼 - 从 patterns 中提炼出的原则/洞察
-状态：pending -> verified -> abandoned
+Agent 手动维护 - 从 patterns 中提炼出的原则/洞察
+由 Agent 主动调用 LLM 从 L2 patterns 提炼后写入
 
 """
         insights_file.write_text(header)
@@ -67,44 +69,6 @@ def add_insight(agent_id: str, title: str, principle: str, status: str = "pendin
 """
     
     insights_file.write_text(existing + new_insight)
-    return True
-
-
-def update_insight_status(agent_id: str, title: str, new_status: str):
-    """
-    更新洞察状态
-    
-    Args:
-        agent_id: agent 标识
-        title: 洞察标题
-        new_status: pending | verified | abandoned
-    """
-    insights_file = get_insights_file(agent_id)
-    if not insights_file.exists():
-        return False
-    
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    existing = insights_file.read_text()
-    
-    lines = existing.split("\n")
-    new_lines = []
-    in_target = False
-    
-    for line in lines:
-        if f"## {title}" == line:
-            new_lines.append(line)
-            in_target = True
-        elif in_target and line.startswith("**Status**:") and new_status:
-            new_lines.append(f"**Status**: {new_status}")
-        elif in_target and line.startswith("**Updated**:") and new_status:
-            new_lines.append(f"**Updated**: {timestamp}")
-        elif in_target and line.startswith("## "):
-            in_target = False
-            new_lines.append(line)
-        else:
-            new_lines.append(line)
-    
-    insights_file.write_text("\n".join(new_lines))
     return True
 
 
@@ -145,8 +109,3 @@ def get_insights(agent_id: str, status: str = None) -> list:
         results = [r for r in results if r.get("status") == status]
     
     return results
-
-
-def promote_to_verified(agent_id: str, title: str):
-    """将洞察升级为 verified 状态"""
-    return update_insight_status(agent_id, title, "verified")

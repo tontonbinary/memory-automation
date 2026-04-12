@@ -50,26 +50,20 @@ class MemoryAutomation:
         self.reference_manager = ReferenceManager(agent_id=self.agent_id)
 
         # 初始化 session_manager（合并了 state_manager 功能）
+        # 状态文件必须按 agent 隔离，使用 SessionManager 的默认路径
         self.session_manager = SessionManager(
-            agent_id=self.agent_id,
-            state_file=self.config.get("state_file", "memory/heartbeat-state.json")
+            agent_id=self.agent_id
         )
         self.l1_writer = L1Writer(
             agent_id=self.agent_id,
             config=self.config
         )
 
-        # 从 heartbeat-state 读取 api_key 注入 distiller（备用方案）
+        # 从 heartbeat-state 读取 api_key 注入 distiller
         state = self.reference_manager._load_state()
         api_key = state.get("api_key", "")
-
-        # config.local.json 路径（SessionDistiller 需要直接读这个才能拿到 api_key）
-        skill_dir = Path(__file__).parent.parent
-        config_local = skill_dir / "config.local.json"
-
         self.distiller = SessionDistiller(
             min_message_length=self.config.get("distillation", {}).get("min_message_length", 10),
-            config_path=str(config_local),
             reference_manager=self.reference_manager
         )
         if api_key:
@@ -1208,29 +1202,47 @@ def _handle_l2_command(args: list) -> dict:
     from .l2_extraction import (
         add_correction, get_corrections,
         get_patterns, process_patterns_from_corrections,
-        get_insights
+        get_insights, add_correction_legacy
     )
     
     # args[0] = 'memory.automation', args[1] = 'l2', args[2] = 子命令
     if len(args) < 3:
         print("L2 自我改进层命令：")
-        print("  l2 correct --agent <id> --content \"...\" [--source binary|self] [--context \"...\"]")
-        print("  l2 process --agent <id>")
+        print("  l2 correct --agent <id> --topic <T> --wrong <W> --correct <C> [--source binary|self] [--context \"...\"]")
+        print("  l2 process --agent <id> [--min <N>] [--dry-run]")
         print("  l2 status --agent <id>")
+        print("")
+        print("示例：")
+        print("  python -m memory.automation l2 correct --agent xiaoxian --topic \"代码风格\" --wrong \"双引号\" --correct \"单引号\"")
+        print("  python -m memory.automation l2 process --agent xiaoxian --min 3")
         return {"error": "缺少子命令"}
     
     subcmd = args[2].lower()
     
     # 解析参数 (从 args[3] 开始，因为 args[0]=模块名, args[1]=l2, args[2]=子命令)
     agent_id = None
-    content = None
+    topic = None
+    wrong = None
+    correct = None
+    content = None  # 兼容旧接口
     source = "self"
     context = ""
+    min_count = 3
+    dry_run = False
     
     i = 3
     while i < len(args):
         if args[i] == "--agent" and i + 1 < len(args):
             agent_id = args[i + 1]
+            i += 2
+        elif args[i] == "--topic" and i + 1 < len(args):
+            topic = args[i + 1]
+            i += 2
+        elif args[i] == "--wrong" and i + 1 < len(args):
+            wrong = args[i + 1]
+            i += 2
+        elif args[i] == "--correct" and i + 1 < len(args):
+            correct = args[i + 1]
             i += 2
         elif args[i] == "--content" and i + 1 < len(args):
             content = args[i + 1]
@@ -1241,6 +1253,15 @@ def _handle_l2_command(args: list) -> dict:
         elif args[i] == "--context" and i + 1 < len(args):
             context = args[i + 1]
             i += 2
+        elif args[i] == "--min" and i + 1 < len(args):
+            try:
+                min_count = int(args[i + 1])
+            except ValueError:
+                min_count = 3
+            i += 2
+        elif args[i] == "--dry-run":
+            dry_run = True
+            i += 1
         else:
             i += 1
     
@@ -1248,15 +1269,27 @@ def _handle_l2_command(args: list) -> dict:
         return {"error": "缺少 --agent 参数"}
     
     if subcmd == "correct":
-        if not content:
-            return {"error": "correct 命令需要 --content 参数"}
-        add_correction(agent_id, content, source, context)
-        return {"success": True, "action": "add_correction", "agent": agent_id}
+        # 新格式：使用 --topic --wrong --correct
+        if topic and wrong and correct:
+            add_correction(agent_id, topic, wrong, correct, source, context)
+            return {"success": True, "action": "add_correction", "format": "structured", "agent": agent_id}
+        # 旧格式：使用 --content（自动解析）
+        elif content:
+            add_correction_legacy(agent_id, content, source, context)
+            return {"success": True, "action": "add_correction", "format": "legacy", "agent": agent_id}
+        else:
+            return {"error": "correct 命令需要 --topic/--wrong/--correct 或 --content 参数"}
     
     elif subcmd == "process":
         # 从 corrections 生成 patterns
-        count = process_patterns_from_corrections(agent_id)
-        return {"success": True, "action": "process_patterns", "corrections_processed": count}
+        result = process_patterns_from_corrections(agent_id, min_count=min_count, dry_run=dry_run)
+        return {
+            "success": True, 
+            "action": "process_patterns", 
+            "corrections_processed": result.get("processed", 0),
+            "patterns_created": result.get("created", 0),
+            "patterns_updated": result.get("updated", 0)
+        }
     
     elif subcmd == "status":
         corrections = get_corrections(agent_id)
@@ -1265,7 +1298,7 @@ def _handle_l2_command(args: list) -> dict:
         print(f"\n[L2 Status] Agent: {agent_id}")
         print(f"  Corrections: {len(corrections)}")
         print(f"  Patterns: {len(patterns)}")
-        print(f"  Insights: {len(insights)}")
+        print(f"  Insights: {len(insights)} (Agent 手动维护)")
         return {
             "success": True,
             "corrections_count": len(corrections),
@@ -1349,8 +1382,8 @@ def _handle_l3_command(args: list) -> dict:
         
         if exists:
             content = l3_path.read_text(encoding='utf-8')
-            insights_count = content.count("### ")
-            print(f"  条目数: {insights_count}")
+            entry_count = content.count("### ")
+            print(f"  条目数: {entry_count}")
         
         return {
             "success": True,

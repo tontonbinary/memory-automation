@@ -27,7 +27,7 @@ class L1ToL2Promoter:
     
     # 配置
     DEFAULT_DAYS_BACK = 7  # 检查最近7天
-    DEFAULT_MIN_OCCURRENCES = 3  # 最少出现3次
+    DEFAULT_MIN_OCCURRENCES = 3  # 已废弃，保留兼容
     
     def __init__(self, 
                  agent_id: str,
@@ -81,9 +81,21 @@ class L1ToL2Promoter:
         """返回空状态"""
         return {
             "promoted_tags": [],
+            "processed_selfevolve": [],
             "last_check": None,
-            "version": "1.0.0"
+            "version": "2.0.0"
         }
+    
+    def _is_selfevolve_processed(self, entry_id: str) -> bool:
+        """检查 SelfEvolve 条目是否已处理"""
+        return entry_id in self.state.get("processed_selfevolve", [])
+    
+    def _mark_selfevolve_processed(self, entry_id: str) -> None:
+        """标记 SelfEvolve 条目为已处理"""
+        processed = self.state.get("processed_selfevolve", [])
+        if entry_id not in processed:
+            processed.append(entry_id)
+            self.state["processed_selfevolve"] = processed
     
     def _save_state(self) -> bool:
         """保存状态文件"""
@@ -114,85 +126,110 @@ class L1ToL2Promoter:
                          min_occurrences: int = None,
                          dry_run: bool = False) -> Dict:
         """
-        检查并提升标签
+        检查并提取 SelfEvolve 条目到 corrections.jsonl
+        
+        逻辑变更 (v2.0):
+        - 不再统计标签频次，而是直接提取 event_type == SelfEvolve 的条目
+        - 每个 SelfEvolve 条目映射为 correction 格式写入 corrections.jsonl
+        - 通过 processed_selfevolve 去重，避免重复写入
         
         Args:
             days_back: 回溯天数，默认使用 DEFAULT_DAYS_BACK
-            min_occurrences: 最小出现次数，默认使用 DEFAULT_MIN_OCCURRENCES
+            min_occurrences: 已废弃，保留参数兼容
             dry_run: 是否仅模拟，不实际写入
             
         Returns:
             执行结果报告
         """
         days_back = days_back or self.DEFAULT_DAYS_BACK
-        min_occurrences = min_occurrences or self.DEFAULT_MIN_OCCURRENCES
         
         print(f"\n{'='*60}")
-        print(f"[L1→L2] 开始检查")
+        print(f"[L1→L2] 开始提取 SelfEvolve 条目到 corrections")
         print(f"  时间范围: 最近 {days_back} 天")
-        print(f"  最小次数: {min_occurrences} 次")
+        print(f"  筛选条件: event_type == SelfEvolve (即 item_type == improvement)")
         print(f"  模拟模式: {dry_run}")
         print(f"{'='*60}\n")
         
-        # 1. 分析标签
-        qualified_tags = self.analyzer.analyze_tags(days_back, min_occurrences)
+        # 1. 提取 SelfEvolve 条目
+        entries = self.analyzer.analyze_selfevolve_entries(days_back)
         
-        if not qualified_tags:
-            print("[L1→L2] 未发现符合条件的标签")
+        if not entries:
+            print("[L1→L2] 未发现 SelfEvolve 条目")
             return {
                 "checked": True,
                 "promoted": [],
                 "skipped": [],
-                "reason": "no_qualified_tags"
+                "reason": "no_selfevolve_entries"
             }
         
-        # 2. 获取已提升的标签
-        promoted_tags = self.get_promoted_tags()
-        
-        # 3. 筛选未提升的标签
-        new_tags = {}
-        skipped_tags = []
-        
-        for tag_name, stats in qualified_tags.items():
-            if tag_name in promoted_tags:
-                print(f"[L1→L2] 跳过已提升标签: #{tag_name}")
-                skipped_tags.append(tag_name)
-            else:
-                new_tags[tag_name] = stats
-        
-        # 4. 写入 L2
+        # 2. 写入 L2 corrections
         promoted = []
-        if new_tags:
-            if dry_run:
-                print(f"\n[L1→L2] 【模拟模式】将提升以下标签:")
-                for tag_name in new_tags:
-                    print(f"  - #{tag_name}")
-                promoted = list(new_tags.keys())
-            else:
-                print(f"\n[L1→L2] 正在写入 L2...")
-                for tag_name, stats in new_tags.items():
-                    if self.writer.append_tag(tag_name, stats):
-                        self.add_promoted_tag(tag_name)
-                        promoted.append(tag_name)
+        skipped = []
         
-        # 5. 保存状态
+        for entry in entries:
+            # 生成唯一标识用于去重
+            entry_id = f"{entry['date']}|{entry['time']}|{entry['content'][:60]}"
+            
+            if self._is_selfevolve_processed(entry_id):
+                print(f"[L1→L2] 跳过已处理条目: {entry['date']} {entry['time']}")
+                skipped.append(entry_id)
+                continue
+            
+            # 映射到 correction 格式
+            topic = entry["tags"][0] if entry["tags"] else "self-evolve"
+            # 如果 L1 条目的 improve 字段有值，用它作为 wrong；否则用占位符
+            wrong = entry["improve"] if entry["improve"] else f"[SelfEvolve@{entry['date']} {entry['time']}]"
+            correct = entry["content"]
+            context_parts = [
+                f"日期: {entry['date']} {entry['time']}",
+            ]
+            if entry["tags"]:
+                context_parts.append(f"标签: {' '.join('#'+t for t in entry['tags'])}")
+            if entry["source"]:
+                context_parts.append(f"来源: {entry['source']}")
+            if entry["action"]:
+                context_parts.append(f"后续行动: {entry['action']}")
+            context = ", ".join(context_parts)
+            
+            if dry_run:
+                print(f"[L1→L2] 【模拟】将写入 correction:")
+                print(f"  topic={topic}")
+                print(f"  wrong={wrong[:50]}...")
+                print(f"  correct={correct[:50]}...")
+                promoted.append(entry_id)
+            else:
+                success = self.writer.add_correction(
+                    topic=topic,
+                    wrong=wrong,
+                    correct=correct,
+                    source="l1_selfevolve",
+                    context=context
+                )
+                if success:
+                    self._mark_selfevolve_processed(entry_id)
+                    promoted.append(entry_id)
+                    print(f"[L1→L2] 已写入 correction: [{topic}] {correct[:40]}...")
+                else:
+                    print(f"[L1→L2] 写入失败: [{topic}]")
+        
+        # 3. 保存状态
         if not dry_run:
             self._save_state()
         
-        # 6. 生成报告
+        # 4. 生成报告
         result = {
             "checked": True,
-            "qualified_count": len(qualified_tags),
+            "total_entries": len(entries),
             "promoted": promoted,
-            "skipped": skipped_tags,
+            "skipped": skipped,
             "dry_run": dry_run
         }
         
         print(f"\n{'='*60}")
-        print(f"[L1→L2] 检查完成")
-        print(f"  符合条件: {len(qualified_tags)} 个标签")
-        print(f"  本次提升: {len(promoted)} 个")
-        print(f"  跳过(已存在): {len(skipped_tags)} 个")
+        print(f"[L1→L2] 提取完成")
+        print(f"  发现条目: {len(entries)} 条")
+        print(f"  本次写入: {len(promoted)} 条")
+        print(f"  跳过(已处理): {len(skipped)} 条")
         print(f"{'='*60}\n")
         
         return result
