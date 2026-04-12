@@ -399,6 +399,10 @@ __SESSION_CONTENT__
             if role == 'toolResult':
                 return False
             
+            # system 消息直接丢弃（内部系统事件，无用户价值）
+            if role == 'system':
+                return False
+            
             # assistant 消息需要追溯 parentId 链
             if role == 'assistant':
                 current_id = msg.get('parentId')
@@ -481,6 +485,16 @@ __SESSION_CONTENT__
             # 跳过空消息和短消息
             if len(content) < self.min_message_length:
                 continue
+
+            # 过滤纯 heartbeat 系统轮询消息
+            # user 消息：内容以 "Read HEARTBEAT" 开头
+            # assistant 消息：内容仅含 "HEARTBEAT_OK"（后面跟换行或无内容）
+            if role == "user" and content.startswith("Read HEARTBEAT"):
+                continue
+            if role == "assistant":
+                content_first_line = content.split("\n")[0].strip()
+                if content_first_line == "HEARTBEAT_OK":
+                    continue
 
             # 角色显示名称
             if role == "user":
