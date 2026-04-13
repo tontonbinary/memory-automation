@@ -1,30 +1,139 @@
-MIT License with Non-Commercial Clause
+================================================================================
+Tontonbinary Open License v1.0
+Copyright (c) 2026 tontonbinary (GitHub: github.com/tontonbinary)
 
-Copyright (c) 2026 [吴斌 / tontonbinary]
+【ENGLISH VERSION】
+================================================================================
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, subject to the following conditions:
+Article 1 — Grant of License
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Subject to the terms and conditions of this License, the Licensor hereby
+grants you a free, non-exclusive, non-transferable, limited license to:
+
+  (a) use, copy, and modify the Software for non-commercial purposes only;
+  (b) share the Software with others, provided that:
+        - you do not charge any fee for the Software itself; and
+        - you include this License in full with any distribution.
+
+Article 2 — Prohibited Uses
+
+The following uses of the Software are EXPRESSLY PROHIBITED without prior
+written permission from the Licensor:
+
+  (1) Any commercial use, including but not limited to:
+      - incorporating the Software into a commercial product or service;
+      - using the Software to generate revenue of any kind;
+      - offering the Software as a paid SaaS, PaaS, or similar service;
+      - sublicensing, selling, renting, or leasing the Software;
+  (2) Using the Software in a manner that competes with the Licensor's
+      commercial offerings;
+  (3) Removing, altering, or concealing any copyright, trademark, or
+      other proprietary notices in or on the Software;
+  (4) Representing that the Software is licensed under an open-source
+      license approved by the Open Source Initiative (OSI) without
+      express prior written approval from the Licensor.
+
+Article 3 — Commercial Licensing
+
+Commercial use requires a separate written agreement with the Licensor.
+
+  Contact: xiaoxian@ezcan.cn
+  GitHub:  https://github.com/tontonbinary/memory-automation/issues
+
+License fees, scope of use, and terms are negotiable and subject to
+separate written agreement between both parties.
+
+Article 4 — Derivative Works
+
+Any derivative works (modifications, translations, adaptations, extended
+versions) are subject to this License in their entirety. You may not
+re-license derivative works under different terms.
+
+Article 5 — Disclaimer of Warranty
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
+FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, ARISING OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OF THE SOFTWARE.
 
-### Non-Commercial Clause
-This software is provided for **non-commercial use only**.
-You may NOT use this software, in whole or in part, for any commercial purposes, including but not limited to:
-- Selling copies of the software
-- Using it in a commercial product or service
-- Using it to generate revenue, directly or indirectly
-- Hosting it as a commercial service (SaaS/PaaS)
+Article 6 — Termination
 
-For commercial licensing, please contact the copyright holder for separate agreement.
+Violation of Article 2 automatically terminates this License.
+Upon written notice from the Licensor, you must destroy all copies of
+the Software in your possession within 7 days.
+Termination does not affect any rights or obligations that arose before
+the date of termination.
+
+Article 7 — License Amendments
+
+The Licensor reserves the right to amend this License at any time.
+Amended versions will be published at the GitHub repository above.
+Your continued use of the Software after the posting of an amended License
+constitutes acceptance of the amended terms.
+
+================================================================================
+Tontonbinary 开源协议 v1.0
+版权所有 (c) 2026 tontonbinary (GitHub: github.com/tontonbinary)
+
+【中文版本】
+================================================================================
+
+第一条 — 许可授予
+
+在遵守本协议各项条款的前提下，许可人免费授予您以下有限、非独占、不可转让的许可：
+
+  (a) 仅将本软件用于非商业目的的使用、复制和修改；
+  (b) 与他人分享本软件，但须满足：
+        - 不得对本软件本身收取任何费用；且
+        - 在任何分发中必须完整保留本协议副本。
+
+第二条 — 禁止用途
+
+以下行为严禁在未获得许可人书面授权的情况下进行：
+
+  (1) 任何形式的商业使用，包括但不限于：
+      - 将本软件集成到商业产品或服务中；
+      - 使用本软件以任何形式产生收入；
+      - 将本软件作为付费 SaaS、PaaS 或类似服务提供；
+      - 对本软件进行转许可、销售、租赁或出借；
+  (2) 以与许可人的商业产品形成竞争的方式使用本软件；
+  (3) 去除、篡改或隐藏本软件中存在的任何版权、商标或其他专有声明；
+  (4) 声称本软件系根据开源倡议组织（OSI）认可的开源协议授权，
+      除非经许可人明确书面批准。
+
+第三条 — 商业授权
+
+商业使用须与许可人另行签订书面协议。
+
+  联系邮箱：xiaoxian@ezcan.cn
+  GitHub：   https://github.com/tontonbinary/memory-automation/issues
+
+授权费用、使用范围及具体条款另议，以双方书面协议为准。
+
+第四条 — 衍生作品
+
+对本软件进行修改、翻译、改写、扩展等形成的衍生作品，同样受本协议全部条款约束。
+衍生作品不得在不同于本协议的条款下进行再许可。
+
+第五条 — 免责声明
+
+本软件按"原样"提供，不提供任何明示或暗示的保证，包括但不限于：
+对适销性、特定用途适用性、非侵权性的保证。
+在任何情况下，许可人均不对因本软件或本软件的使用而产生的任何索赔、损害
+或任何其他责任负责，无论该等责任是基于合同、侵权或其他任何原因。
+
+第六条 — 协议终止
+
+违反第二条的行为将自动导致本协议终止。
+收到许可人书面通知后，您须在 7 日内销毁所持有的本软件全部副本。
+协议终止不影响终止日前已产生的权利和义务。
+
+第七条 — 协议修订
+
+许可人保留随时修订本协议的权利。
+修订后的协议将发布于上述 GitHub 仓库地址。
+您在本协议修订版本发布后继续使用本软件，即视为接受修订后的条款。
+
+================================================================================
