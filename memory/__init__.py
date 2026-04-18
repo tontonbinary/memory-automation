@@ -16,16 +16,20 @@ __author__ = "OpenClaw"
 from .session_manager import SessionManager
 from .session_distiller import SessionDistiller
 from .automation import MemoryAutomation
-from .tag_analyzer import TagAnalyzer
-from .l2_writer import L2Writer
-from .l1_to_l2 import L1ToL2Promoter
 
 # L2 子模块（从 l2-extraction 整合）
 from .l2_extraction import (
-    add_correction, get_corrections,
-    add_or_update_pattern, get_patterns, process_patterns_from_corrections,
-    add_insight, get_insights,
-    L2_DIR, CORRECTIONS_FILE, PATTERNS_FILE, INSIGHTS_FILE
+    add_correction,
+    get_corrections,
+    add_or_update_pattern,
+    get_patterns,
+    process_patterns_from_corrections,
+    add_insight,
+    get_insights,
+    L2_DIR,
+    CORRECTIONS_FILE,
+    PATTERNS_FILE,
+    INSIGHTS_FILE,
 )
 
 # L3 模块（L2→L3 提升接口，当前已禁用自动提升）
@@ -34,11 +38,8 @@ from .l3_writer import L3Writer
 __all__ = [
     # 核心
     "SessionManager",
-    "SessionDistiller", 
+    "SessionDistiller",
     "MemoryAutomation",
-    "TagAnalyzer",
-    "L2Writer",
-    "L1ToL2Promoter",
     # L2 实时改进
     "add_correction",
     "get_corrections",
