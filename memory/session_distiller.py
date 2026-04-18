@@ -496,6 +496,10 @@ __SESSION_CONTENT__
                 if content_first_line == "HEARTBEAT_OK":
                     continue
 
+            # 过滤 System Exec completed/failed 系统执行结果消息
+            if role == "user" and content.startswith("System (untrusted):"):
+                continue
+
             # 角色显示名称
             if role == "user":
                 role_display = "用户"
