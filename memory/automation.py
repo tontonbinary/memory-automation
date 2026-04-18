@@ -26,6 +26,7 @@ from .l1_reader import L1Reader, L1Data
 from .reference_manager import ReferenceManager
 from .processed_sessions_tracker import ProcessedSessionsTracker
 from .l3_consolidator import L3Consolidator
+from .l2_checker import L2Checker
 
 
 class MemoryAutomation:
@@ -1031,7 +1032,17 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                 summary = self._generate_summary(items, lines_written)
                 result["summary"] = summary
                 print(summary)
-        
+            
+            # ===== L2 自我改进检查 =====
+            try:
+                l2_checker = L2Checker(self.agent_id)
+                l2_report = l2_checker.generate_reminder_report()
+                if l2_report:
+                    print(l2_report)
+            except Exception as e:
+                # L2 检查失败不应影响主流程
+                print(f"[MemoryAutomation] L2 检查异常: {e}")
+                
         # 注意：积压检查已提前到 should_process 判断之前（第 890 行附近）
         # Fix: #1 - 确保积压处理不受间隔时间影响
         
