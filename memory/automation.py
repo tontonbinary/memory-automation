@@ -975,12 +975,15 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                 result["l3_consolidated"] = {"success": False, "error": str(e)}
         
         # ===== 第四步：检查活跃 session 处理间隔 =====
-        interval = self.config.get("heartbeat_interval_minutes", 30)
+        # L3 窗口内特殊放行：只执行 L3 不强制要求 L1 间隔
+        interval = self.config.get("heartbeat_interval_minutes", 360)
         should_process, reason = self.session_manager.check_should_process(
             session_key, interval
         )
-
-        if not should_process:
+        
+        # 在 L3 窗口内：允许只执行 L3 后返回（不解耦 L1）
+        # 但 L1 仍然需要满足间隔要求
+        if not should_process and not (is_l3_window and result.get("l3_consolidated")):
             result["reason"] = f"间隔时间未到: {reason}"
             if result.get("backlog_processed"):
                 result["reason"] += "（但已检查积压）"
