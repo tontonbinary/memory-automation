@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Message Processor - 消息处理模块（简化版）
-只负责保存 clean_session，不再做 LLM 蒸馏和 L1 写入
+只负责保存 clean_session，不再切块、不做 LLM 蒸馏
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
@@ -14,7 +14,7 @@ from .session_manager import SessionManager
 
 
 class MessageProcessor:
-    """消息处理器 - 简化版"""
+    """消息处理器 - 简化版（不切块）"""
 
     def __init__(self, agent_id: str, config: Dict[str, Any],
                  session_manager: SessionManager,
@@ -24,44 +24,28 @@ class MessageProcessor:
         self.session_manager = session_manager
         self.cleaner = cleaner
 
-    def _get_session_chunks(self, messages: List[Dict[str, Any]],
-                           max_messages_per_chunk: int = 200) -> List[Tuple[List[Dict[str, Any]], int, str]]:
-        """
-        将消息列表切分成多个块
-
-        Returns:
-            [(messages_chunk, chunk_idx, chunk_name), ...]
-        """
-        if not messages:
-            return []
-
-        # 获取 session 日期
-        session_date = None
+    def _get_date_str(self, messages: List[Dict[str, Any]]) -> str:
+        """从消息中获取日期字符串（北京时间）"""
         if messages and messages[0].get('timestamp'):
             ts = messages[0]['timestamp']
             if isinstance(ts, str) and len(ts) >= 10:
-                session_date = ts[:10].replace("-", "")[4:]  # MMDD
-
-        if not session_date:
-            session_date = datetime.now().strftime("%m%d")
-
-        chunks = []
-        total = len(messages)
-        num_chunks = (total + max_messages_per_chunk - 1) // max_messages_per_chunk
-
-        for chunk_idx in range(num_chunks):
-            start = chunk_idx * max_messages_per_chunk
-            end = min(start + max_messages_per_chunk, total)
-            chunk_messages = messages[start:end]
-            chunk_name = f"{session_date}#L{chunk_idx + 1}"
-            chunks.append((chunk_messages, chunk_idx + 1, chunk_name))
-
-        return chunks
+                try:
+                    # 处理 UTC 时间转换为北京时间
+                    ts_clean = ts.replace('Z', '+00:00')
+                    dt = datetime.fromisoformat(ts_clean)
+                    # 转换为北京时间
+                    bj = timezone(timedelta(hours=8))
+                    dt_bj = dt.astimezone(bj)
+                    return dt_bj.strftime("%Y-%m-%d")
+                except:
+                    pass
+        return datetime.now().strftime("%Y-%m-%d")
 
     def _save_clean_session(self, cleaned_messages: List[Dict[str, Any]],
-                           chunk_name: str) -> Optional[Path]:
+                           date_str: str) -> Optional[Path]:
         """
-        保存清洗后的消息到 clean_session 目录
+        保存清洗后的消息到 clean_session 目录（追加模式）
+        每天只保存一个文件：{YYYY-MM-DD}.json
         """
         clean_dir_str = self.config.get("output", {}).get("clean_session_dir",
             f"~/.openclaw/agents/{self.agent_id}/clean_session")
@@ -69,14 +53,28 @@ class MessageProcessor:
 
         try:
             clean_dir.mkdir(parents=True, exist_ok=True)
-            clean_path = clean_dir / f"{chunk_name}.json"
+            clean_path = clean_dir / f"{date_str}.json"
 
-            # 保存为精简 JSON 格式
-            data = self.cleaner.format_as_json(cleaned_messages)
+            # 读取已有内容（如果存在）
+            existing_data = []
+            if clean_path.exists():
+                try:
+                    with open(clean_path, 'r', encoding='utf-8') as f:
+                        existing_data = json.load(f)
+                except:
+                    pass  # 文件损坏则覆盖
+
+            # 追加新消息
+            new_data = self.cleaner.format_as_json(cleaned_messages)
+            all_data = existing_data + new_data
+
+            # 保存
             with open(clean_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+                json.dump(all_data, f, ensure_ascii=False, indent=2)
 
-            print(f"[MessageProcessor] 保存 clean_session: {clean_path}")
+            msg_count = len(new_data)
+            total_count = len(all_data)
+            print(f"[MessageProcessor] 保存 {msg_count} 条到 {clean_path}（共 {total_count} 条）")
             return clean_path
         except Exception as e:
             print(f"[MessageProcessor] 保存 clean_session 失败: {e}")
@@ -85,10 +83,10 @@ class MessageProcessor:
     def process_session(self, messages: List[Dict[str, Any]],
                        force: bool = False) -> Tuple[int, List[Path]]:
         """
-        处理会话消息：清洗 → 切块 → 保存 clean_session
+        处理会话消息：清洗 → 保存到当天的单个 clean_session 文件
 
         Returns:
-            (保存的块数, clean_session 文件路径列表)
+            (保存的文件数, clean_session 文件路径列表)
         """
         if not messages:
             return 0, []
@@ -101,20 +99,17 @@ class MessageProcessor:
 
         print(f"[MessageProcessor] 清洗完成: {len(messages)} 条 -> {len(cleaned)} 条")
 
-        # 2. 切块
-        chunk_size = self.config.get("distillation", {}).get("max_messages_per_chunk", 200)
-        chunks = self._get_session_chunks(cleaned, max_messages_per_chunk=chunk_size)
-        print(f"[MessageProcessor] 切块: {len(chunks)} 块")
+        # 2. 获取当天的日期字符串
+        date_str = self._get_date_str(messages)
 
-        # 3. 保存每块为 clean_session
-        saved_paths = []
-        for chunk_messages, chunk_idx, chunk_name in chunks:
-            clean_path = self._save_clean_session(chunk_messages, chunk_name)
-            if clean_path:
-                saved_paths.append(clean_path)
+        # 3. 保存到当天的单个文件
+        clean_path = self._save_clean_session(cleaned, date_str)
 
-        print(f"[MessageProcessor] 完成: 保存 {len(saved_paths)} 个 clean_session 文件")
-        return len(saved_paths), saved_paths
+        if clean_path:
+            print(f"[MessageProcessor] 完成: {clean_path}")
+            return 1, [clean_path]
+
+        return 0, []
 
     def process_old_session(self, old_session_key: str,
                            last_processed_msg_id: Optional[str] = None) -> Tuple[int, List[Path]]:
@@ -122,7 +117,7 @@ class MessageProcessor:
         处理旧 session 中未保存的消息
 
         Returns:
-            (保存的块数, clean_session 文件路径列表)
+            (保存的文件数, clean_session 文件路径列表)
         """
         print(f"[MessageProcessor] 处理旧 session: {old_session_key}")
 

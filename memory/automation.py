@@ -672,15 +672,15 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         
         # 计算前一天日期
         yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        yesterday_short = (now - timedelta(days=1)).strftime("%m%d")
+        yesterday_short = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         
-        # 检查前一天 clean_session 是否存在
+        # 检查前一天 clean_session 是否存在（新的文件名格式：{YYYY-MM-DD}.json）
         clean_dir_str = self.config.get("output", {}).get("clean_session_dir",
             f"~/.openclaw/agents/{self.agent_id}/clean_session")
         clean_dir = Path(clean_dir_str).expanduser()
         
-        yesterday_clean_files = list(clean_dir.glob(f"{yesterday_short}#*.json"))
-        if not yesterday_clean_files:
+        yesterday_clean_file = clean_dir / f"{yesterday_short}.json"
+        if not yesterday_clean_file.exists():
             return None
         
         # 检查前一天 L1 是否存在且有内容
@@ -699,22 +699,21 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
             return None  # L1 已写，无需提醒
         
         # 构建提醒消息
-        clean_count = len(yesterday_clean_files)
         msg = f"""
-📅 凌晨总结提醒 ({yesterday})
+📅 凌晨总结提醒 ({yesterday_short})
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-检测到昨日有 {clean_count} 个 clean_session 文件，但 L1 日志尚未写入。
+检测到昨日有 clean_session 文件，但 L1 日志尚未写入。
 
 建议操作：
-1. 读取 clean_session：{clean_dir}/{yesterday_short}#L*.json
+1. 读取 clean_session：{yesterday_clean_file}
 2. 在上下文中总结要点
-3. 写入 L1：memory/{yesterday}.md
+3. 写入 L1：memory/{yesterday_short}.md
 
 格式示例：
   writer.write([
       {{"tag": "Event", "event_type": "CoreWork", "content": "..."}},
       {{"tag": "To-do", "event_type": "CoreWork", "content": "..."}},
-  ], "{yesterday}")
+  ], "{yesterday_short}")
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
         return msg
 
