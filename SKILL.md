@@ -124,11 +124,14 @@ entries = [
     {'event_type': 'CoreWork', 'content': '用户要求简化 Mauto：去除 L3 auto-dream'},
     {'event_type': 'SocialEcology', 'content': '用户偏好简洁日志格式'},
     {'event_type': 'To-do', 'content': '每天凌晨 03:00-04:00 提醒总结前一日 clean_session'},
-    {'event_type': 'To-do', 'content': '另一个待办事项'},
+    {'event_type': 'To-do', 'content': 'L1 格式需要修正'},
+    {'event_type': 'Output', 'content': '实现了新的 L1 格式'},
 ]
 
 writer.write(entries, "2026-04-27")
 ```
+
+**多条目示例**：上面 To-do 有两条内容，索引和正文都会显示两条。
 
 ---
 
