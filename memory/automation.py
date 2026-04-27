@@ -651,25 +651,82 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
         return result
 
+    def _check_daily_summary(self) -> Optional[str]:
+        """
+        检查是否需要提醒 Agent 总结前一日的 clean_session
+        
+        触发条件：
+        - 当前时间在 03:00-04:00 之间
+        - 前一天有 clean_session 文件
+        - 前一天没有 L1 文件（或 L1 为空）
+        
+        Returns:
+            提醒消息，或 None（不需要提醒）
+        """
+        from datetime import datetime, timedelta
+        
+        now = datetime.now()
+        # 检查是否在 03:00-04:00
+        if not (3 <= now.hour < 4):
+            return None
+        
+        # 计算前一天日期
+        yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_short = (now - timedelta(days=1)).strftime("%m%d")
+        
+        # 检查前一天 clean_session 是否存在
+        clean_dir_str = self.config.get("output", {}).get("clean_session_dir",
+            f"~/.openclaw/agents/{self.agent_id}/clean_session")
+        clean_dir = Path(clean_dir_str).expanduser()
+        
+        yesterday_clean_files = list(clean_dir.glob(f"{yesterday_short}#*.json"))
+        if not yesterday_clean_files:
+            return None
+        
+        # 检查前一天 L1 是否存在且有内容
+        l1_path = self.l1_writer._get_l1_path(yesterday)
+        l1_exists = l1_path.exists()
+        l1_has_content = False
+        if l1_exists:
+            try:
+                content = l1_path.read_text(encoding='utf-8')
+                # 检查是否有实际条目（非空文件）
+                l1_has_content = len(content.strip()) > 50  # 简单判断
+            except:
+                pass
+        
+        if l1_exists and l1_has_content:
+            return None  # L1 已写，无需提醒
+        
+        # 构建提醒消息
+        clean_count = len(yesterday_clean_files)
+        msg = f"""
+📅 凌晨总结提醒 ({yesterday})
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+检测到昨日有 {clean_count} 个 clean_session 文件，但 L1 日志尚未写入。
+
+建议操作：
+1. 读取 clean_session：{clean_dir}/{yesterday_short}#L*.json
+2. 在上下文中总结要点
+3. 写入 L1：memory/{yesterday}.md
+
+格式示例：
+  writer.write([
+      {{"tag": "Event", "event_type": "CoreWork", "content": "..."}},
+      {{"tag": "To-do", "event_type": "CoreWork", "content": "..."}},
+  ], "{yesterday}")
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+        return msg
+
     def run_heartbeat(self) -> Dict[str, Any]:
         """
         Heartbeat 触发入口
 
-        架构：
-        1. Heartbeat 读取新消息 → 写入 pending_queue
-        2. 打印提示 → Agent 在自己上下文蒸馏
-        3. 关键词触发 → 同样流程
-
-        Session 切换处理：
-        - 检测到 session_key 变化时，先处理旧 session 的未蒸馏消息
-        - 避免因 session 切换导致消息遗漏
-
-        无 agent_id 时：
-        - 写入激活标记，跳过主逻辑
-        - 由 agent 通知用户激活
-
-        Returns:
-            处理结果
+        流程：
+        1. Session 切换处理（保存旧 session clean_session）
+        2. 积压处理
+        3. 凌晨总结提醒（03:00-04:00，提醒总结前一日）
+        4. 活跃 session 处理（保存当前 session clean_session）
         """
         # 静默时段检查（简化 - 不再依赖 l3_consolidation）
         from datetime import datetime
@@ -722,6 +779,13 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
             return result
         
         print(f"[MemoryAutomation] {config_status['message']}")
+
+        # ===== 第三步：凌晨总结提醒（03:00-04:00）=====
+        summary_reminder = self._check_daily_summary()
+        if summary_reminder:
+            print(summary_reminder)
+            result["summary_reminder"] = True
+            # 继续执行后续步骤，不返回
 
         # 获取当前会话（只获取新消息）
         session_key, messages, last_msg_id = self.get_current_session()
