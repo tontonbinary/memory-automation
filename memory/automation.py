@@ -694,6 +694,89 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
         return msg
 
+    def _check_session_inactivity(self) -> Optional[str]:
+        """
+        检查 session 是否超过指定时间无活动
+        
+        Returns:
+            需要 reset 的提示消息，或 None
+        """
+        inactivity_minutes = self.config.get("session_inactivity_minutes", 30)
+        
+        # 获取当前 session 的最后消息时间
+        session_key, messages, _ = self.get_current_session()
+        if not messages:
+            return None
+        
+        # 找到最后一条消息的时间
+        last_msg_time = None
+        for msg in reversed(messages):
+            ts = msg.get('timestamp', '')
+            if ts:
+                try:
+                    ts_clean = ts.replace('Z', '+00:00')
+                    last_msg_time = datetime.fromisoformat(ts_clean)
+                    break
+                except:
+                    pass
+        
+        if not last_msg_time:
+            return None
+        
+        # 检查是否超过 inactivity 时间
+        now = datetime.now(last_msg_time.tzinfo)
+        diff_minutes = (now - last_msg_time).total_seconds() / 60
+        
+        if diff_minutes >= inactivity_minutes:
+            return f"检测到 {diff_minutes:.0f} 分钟无活动，需要 reset session"
+        
+        return None
+
+    def _reset_current_session(self) -> bool:
+        """
+        Reset 当前 session
+        
+        1. 保存当前 session 的 clean_session
+        2. 重命名 session 文件为 .reset.*
+        3. 清空状态，下次会创建新 session
+        
+        Returns:
+            是否成功 reset
+        """
+        session_key, messages, _ = self.get_current_session()
+        if not session_key:
+            print(f"[MemoryAutomation] [Reset] 无法获取当前 session")
+            return False
+        
+        # 先保存当前 session 的 clean_session
+        if messages:
+            print(f"[MemoryAutomation] [Reset] 先保存当前 session 的 clean_session")
+            self.message_processor.process_session(messages, force=True)
+        
+        # 找到 session 文件并重命名
+        sessions_dir = Path(f"~/.openclaw/agents/{self.agent_id}/sessions").expanduser()
+        
+        # 查找当前 session 对应的文件
+        session_id = session_key.split(':')[-1] if ':' in session_key else session_key
+        
+        for session_file in sessions_dir.glob(f"{session_id}.jsonl*"):
+            if session_file.is_file():
+                # 重命名为 .reset.{timestamp}
+                timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+                new_name = f"{session_file.name}.reset.{timestamp}"
+                new_path = session_file.parent / new_name
+                session_file.rename(new_path)
+                print(f"[MemoryAutomation] [Reset] 重命名: {session_file.name} -> {new_name}")
+        
+        # 清空状态
+        state = self.session_manager._load_state()
+        state["last_session_key"] = None
+        state["last_processed_msg_id"] = None
+        self.session_manager._save_state(state)
+        print(f"[MemoryAutomation] [Reset] 状态已清空，下次 heartbeat 会创建新 session")
+        
+        return True
+
     def run_heartbeat(self) -> Dict[str, Any]:
         """
         Heartbeat 触发入口
@@ -769,6 +852,18 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         if not session_key:
             result["reason"] = "无法获取当前会话"
             return result
+
+        # ===== 第零步：Session 无活动检查（超过 30 分钟无活动则 reset）=====
+        inactivity_msg = self._check_session_inactivity()
+        if inactivity_msg:
+            print(f"[MemoryAutomation] [Heartbeat] {inactivity_msg}")
+            if self._reset_current_session():
+                result["session_reset"] = True
+                result["reason"] = "Session 已 reset，跳过本次处理"
+                # Reset 后重新获取 session
+                session_key, messages, last_msg_id = self.get_current_session()
+                if not session_key or not messages:
+                    return result
 
         # ===== 第一步：Session 切换处理（无条件执行）=====
         state = self.session_manager._load_state()

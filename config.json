@@ -1,6 +1,6 @@
 {
   "skill_name": "memory-automation",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "type": "public",
   "description": "分层记忆管理 Skill，实现 L0→L1→L2 的记忆流转",
   "agent_id": "code",
@@ -23,6 +23,7 @@
   "memory_rules": "~/.openclaw/memory-rules.md",
   "l1_history_days": 7,
   "pattern_threshold": 3,
+  "session_inactivity_minutes": 30,
   "triggers": {
     "manual": {
       "enabled": true,
