@@ -1,444 +1,241 @@
 #!/usr/bin/env python3
 """
-L1 Writer - L1 存储写入模块
-处理 L1 记忆文件的格式化写入
+L1 Writer - L1 存储写入模块（简化版）
+支持 Agent 主动总结写入的新格式
 """
 
-import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 
 
 class L1Writer:
-    """L1 存储写入器"""
+    """L1 存储写入器 - 简化版"""
+
+    # 有效的事件类型和记忆标签
+    EVENT_TYPES = {"CoreWork", "EventsOutside", "SelfEvolve", "SocialEcology", "RuleDecision"}
+    MEMORY_TAGS = {"Event", "Preference", "To-do", "Output", "Emotion"}
 
     def __init__(self, agent_id: str, config: Dict[str, Any]):
         self.agent_id = agent_id
         self.config = config
 
     def _get_l1_path(self, date_str: str = None) -> Path:
-        """获取当前 L1 文件路径"""
+        """获取 L1 文件路径"""
         if date_str is None:
             date_str = datetime.now().strftime("%Y-%m-%d")
-        # 优先从 output.l1_template 读取，其次是顶层 l1_template，最后是默认
         template = self.config.get("output", {}).get("l1_template") \
             or self.config.get("l1_template") \
             or "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md"
         path_str = template.format(agent=self.agent_id, date=date_str)
         return Path(path_str).expanduser()
 
-    def _parse_timestamp(self, raw_ts: str) -> Tuple[str, str]:
+    def _validate_entry(self, entry: Dict[str, Any]) -> tuple:
         """
-        从原始 timestamp 解析时区标签和 HH:MM 显示时间（已转换为 Asia/Shanghai）
-
-        Args:
-            raw_ts: 原始时间字符串，如 "2026-03-30T20:04:22.758Z" 或 "+02:00"
+        验证条目格式
 
         Returns:
-            (timezone_label, time_display)
-            timezone_label: "Asia/Shanghai (UTC+8)" | etc.
-            time_display: "HH:MM" 格式（已转换为本地时区）
+            (is_valid, error_msg)
         """
-        if not raw_ts:
-            return "Unknown", "??:??"
-        try:
-            if raw_ts.endswith('Z'):
-                # UTC -> 转换为 Asia/Shanghai (+8)
-                ts_str = raw_ts[:-1]  # 去掉 Z
-                dt = datetime.fromisoformat(ts_str)
-                dt_local = dt + timedelta(hours=8)
-                return "Asia/Shanghai (UTC+8)", dt_local.strftime("%H:%M")
-            elif '+' in raw_ts:
-                # 带偏移量，如 +08:00、+02:00
-                offset_start = raw_ts.rfind('+')
-                offset_str = raw_ts[offset_start+1:offset_start+6]  # 如 "08:00"
-                offset_hours = int(offset_str.split(':')[0])
-                time_part = raw_ts[:offset_start]
-                dt = datetime.fromisoformat(time_part)
-                dt_local = dt + timedelta(hours=8 - offset_hours)
-                if offset_hours == 8:
-                    tz_label = "Asia/Shanghai (UTC+8)"
-                elif offset_hours == 2:
-                    tz_label = "Europe/Barcelona (UTC+2)"
-                elif offset_hours == 0:
-                    tz_label = "UTC"
-                else:
-                    tz_label = f"UTC+{offset_hours}"
-                return tz_label, dt_local.strftime("%H:%M")
-            else:
-                ts = raw_ts
-                return "Local", ts[11:16]
-        except:
-            return "Unknown", "??"
+        tag = entry.get("tag", "")
+        event_type = entry.get("event_type", "")
+        content = entry.get("content", "")
 
-    def _detect_last_timezone_change(self, content: str) -> Optional[str]:
+        if not content.strip():
+            return False, "内容不能为空"
+
+        if tag and tag not in self.MEMORY_TAGS:
+            return False, f"无效的记忆标签: {tag}，有效值: {self.MEMORY_TAGS}"
+
+        if event_type and event_type not in self.EVENT_TYPES:
+            return False, f"无效的事件类型: {event_type}，有效值: {self.EVENT_TYPES}"
+
+        return True, ""
+
+    def _format_entries(self, entries: List[Dict[str, Any]]) -> Dict[str, List[str]]:
         """
-        从现有文件内容中读取最后一次时区变更标记
+        将条目按事件类型分组，生成 Markdown 行
 
         Returns:
-            时区标签，如 "Asia/Shanghai (UTC+8)"，或 None（未找到）
+            {event_type: ["- [Tag] content", ...]}
         """
-        last_tz = None
-        for line in content.split('\n'):
-            line = line.strip()
-            if line.startswith('# 时区变更:'):
-                # 提取 "Asia/Shanghai (UTC+8) from 20:04" 中的时区部分
-                after_colon = line[6:].strip()
-                # "Asia/Shanghai (UTC+8) from 20:04" → "Asia/Shanghai (UTC+8)"
-                if ' from ' in after_colon:
-                    last_tz = after_colon.split(' from ')[0].strip()
-                else:
-                    last_tz = after_colon
-            elif line.startswith('# 时区:'):
-                # 文件头部的时区（不含变更）
-                if '# 时区变更' not in line:
-                    last_tz = line[5:].strip()
-        return last_tz
+        grouped = {}
+        for entry in entries:
+            is_valid, error = self._validate_entry(entry)
+            if not is_valid:
+                print(f"[L1Writer] 跳过无效条目: {error}")
+                continue
 
-    def _format_l1_entry(self, item: Dict[str, Any], line_number: int = 0,
-                         entry_time: str = None, day_offset: int = 0) -> str:
+            tag = entry.get("tag", "Event")
+            event_type = entry.get("event_type", "CoreWork")
+            content = entry.get("content", "").strip()
+
+            line = f"- [{tag}] {content}"
+
+            if event_type not in grouped:
+                grouped[event_type] = []
+            grouped[event_type].append(line)
+
+        return grouped
+
+    def _build_index_lines(self, entries: List[Dict[str, Any]]) -> List[str]:
         """
-        格式化为 L1 存储格式
-        
-        Args:
-            day_offset: 相对于文件日期的天数偏移（0=当天，1=次日，-1=前一天）
+        构建标签索引行
+
+        Returns:
+            ["| To-do | CoreWork |", ...]
         """
-        if entry_time is None:
-            entry_time = datetime.now().strftime("%H:%M")
-        
-        # 跨日标注：(+1) 表示次日
-        time_display = entry_time
-        if day_offset > 0:
-            time_display = f"{entry_time} (+{day_offset})"
-        elif day_offset < 0:
-            time_display = f"{entry_time} ({day_offset})"
+        seen = set()
+        lines = []
+        for entry in entries:
+            tag = entry.get("tag", "Event")
+            event_type = entry.get("event_type", "CoreWork")
+            key = (tag, event_type)
+            if key not in seen:
+                seen.add(key)
+                lines.append(f"| {tag} | {event_type} |")
+        return lines
 
-        lines = [
-            f"## {time_display}",
-            f"### {item['item_type'].capitalize()}",
-            f"- **内容**：{item['content']}",
-        ]
-
-        if item.get("emotion"):
-            lines.append(f"- **情绪**：{item['emotion']}")
-
-        if item.get("action"):
-            lines.append(f"- **后续行动**：{item['action']}")
-
-        if item.get("oput"):
-            lines.append(f"- **成果**：{item['oput']}")
-
-        if item.get("improve"):
-            lines.append(f"- **纠正**：{item['improve']}")
-
-        if item.get("tags"):
-            tag_str = " ".join([f"#{tag}" for tag in item["tags"]])
-            lines.append(f"- **标签**：`{tag_str}`")
-
-        # 来源：clean_session/03-29#L3#idx=120
-        # 格式：{source}#idx={source_idx}
-        source = item.get("_source")
-        if not source:
-            session_date = item.get("session_date", "")
-            source = f"session/{session_date[5:] if session_date else '??-??'}#L{line_number}"
-        
-        # 拼入 source_idx（指向 clean_session 文件内的消息序号，1-based）
-        source_idx = item.get("source_idx")
-        if source_idx:
-            source = f"{source}#idx={source_idx}"
-        
-        lines.append(f"- **来源**：{source}")
-
-        lines.append("")
-        return "\n".join(lines)
-
-    def write(self, items: List[Dict[str, Any]],
-              session_start_time: str = None,
-              session_end_time: str = None,
-              item_times: List[str] = None,
-              source: str = None) -> int:
+    def write(self, entries: List[Dict[str, Any]], date_str: str = None) -> int:
         """
-        写入 L1 存储文件（两段式格式）
+        写入 L1 存储文件（新格式）
 
         Args:
-            items: 蒸馏项列表
-            session_start_time: session 第一条消息的原始 timestamp
-            session_end_time: session 结束时间戳
-            item_times: 每项的原始 timestamp 列表，与 items 对齐
-            source: 来源标识（如 "clean_session/03-25#L1"）
+            entries: 条目列表，每项格式：
+                {
+                    "tag": "Event|Preference|To-do|Output|Emotion",
+                    "event_type": "CoreWork|EventsOutside|SelfEvolve|SocialEcology|RuleDecision",
+                    "content": "内容摘要"
+                }
+            date_str: 日期字符串 (YYYY-MM-DD)，默认今天
 
         Returns:
             写入行数
         """
-        # 将 source 存入每个 item，供 _format_l1_entry 使用
-        if source:
-            for item in items:
-                item['_source'] = source
-        has_item_times = item_times is not None and len(item_times) >= len(items)
+        if not entries:
+            return 0
 
-        # 从第一条消息获取当前 session 的时区
-        current_tz, _ = self._parse_timestamp(session_start_time if session_start_time else (item_times[0] if has_item_times else ""))
-
-        # 从第一条消息推断日期（使用北京时间，避免 UTC 跨日问题）
-        BJ_TZ = timezone(timedelta(hours=8))
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        if session_start_time:
-            try:
-                dt_utc = datetime.fromisoformat(session_start_time.replace('Z', '+00:00'))
-                dt_bj = dt_utc.astimezone(BJ_TZ)
-                date_str = dt_bj.strftime("%Y-%m-%d")
-            except:
-                date_str = session_start_time[:10]
-        elif has_item_times and item_times[0]:
-            try:
-                dt_utc = datetime.fromisoformat(item_times[0].replace('Z', '+00:00'))
-                dt_bj = dt_utc.astimezone(BJ_TZ)
-                date_str = dt_bj.strftime("%Y-%m-%d")
-            except:
-                date_str = item_times[0][:10]
+        if date_str is None:
+            date_str = datetime.now().strftime("%Y-%m-%d")
 
         l1_path = self._get_l1_path(date_str)
         l1_path.parent.mkdir(parents=True, exist_ok=True)
-        is_new_file = not l1_path.exists()
 
-        # 读取现有内容
-        existing_content = ""
-        start_line = 1
-        file_last_tz = None
-        if not is_new_file:
-            with open(l1_path, 'r', encoding='utf-8') as f:
-                existing_content = f.read()
-            start_line = len(existing_content.splitlines()) + 1
-            file_last_tz = self._detect_last_timezone_change(existing_content)
+        # 检查是否已有当天文件
+        existing_entries = []
+        if l1_path.exists():
+            existing_entries = self._parse_existing_entries(l1_path)
 
-        # 解析每条的时间（HH:MM 和时区标签），并检测跨日
-        parsed_items = []
-        current_batch_tz = current_tz
-        tz_change_inserted = False
-        
-        # 文件基准日期
-        file_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        
-        for idx, item in enumerate(items):
-            raw_ts = item_times[idx] if has_item_times else ''
-            tz_label, time_display = self._parse_timestamp(raw_ts)
-            
-            # 计算日期偏移（检测跨日，使用北京时间）
-            day_offset = 0
-            if raw_ts and len(raw_ts) >= 10:
-                try:
-                    ts_clean = raw_ts.replace('Z', '+00:00')
-                    dt_utc = datetime.fromisoformat(ts_clean)
-                    dt_bj = dt_utc.astimezone(BJ_TZ)
-                    msg_date = dt_bj.date()
-                    day_offset = (msg_date - file_date).days  # 0, 1, -1, etc.
-                except:
-                    pass
-            
-            parsed_items.append({
-                'item': item,
-                'tz': tz_label,
-                'time_display': time_display,
-                'raw_ts': raw_ts,
-                'day_offset': day_offset
-            })
-            # 检查本批次内是否有时区变化
-            if idx == 0:
-                current_batch_tz = tz_label
-            elif tz_label != current_batch_tz:
-                # 第一个时区变化点
-                current_batch_tz = tz_label
-                tz_change_inserted = True
+        # 合并新旧条目
+        all_entries = existing_entries + entries
 
-        # 构建新的标签索引行
-        new_index_lines = []
-        for pi in parsed_items:
-            item = pi['item']
-            time_display = pi['time_display']
-            day_offset = pi['day_offset']
-            # 跨日标注在索引中
-            if day_offset > 0:
-                time_display = f"{time_display} (+{day_offset})"
-            elif day_offset < 0:
-                time_display = f"{time_display} ({day_offset})"
-            
-            item_type = item.get('item_type', '')
-            tags_str = " ".join([f"#{tag}" for tag in item.get("tags", [])]) if item.get("tags") else "-"
-            event_type = item.get('event_type', item['item_type'])
-            new_index_lines.append(f"| {time_display} | {item_type} | {event_type} | {tags_str} |")
-            item['session_date'] = date_str
+        # 去重（基于 content + tag + event_type）
+        seen = set()
+        unique_entries = []
+        for e in all_entries:
+            key = (e.get("tag", ""), e.get("event_type", ""), e.get("content", "").strip())
+            if key not in seen:
+                seen.add(key)
+                unique_entries.append(e)
 
-        # 构建完整日志条目（带跨日标注）
-        new_log_entries = []
-        for idx, pi in enumerate(parsed_items):
-            item = pi['item']
-            time_display = pi['time_display']
-            day_offset = pi['day_offset']
-            entry = self._format_l1_entry(
-                item, 
-                start_line + len(new_index_lines) + idx, 
-                time_display,
-                day_offset=day_offset
-            )
-            new_log_entries.append(entry)
+        # 构建索引
+        index_lines = self._build_index_lines(unique_entries)
 
-        # 是否需要时区变更标记（本批次第一个时区 ≠ 文件最后一个时区）
-        needs_tz_change = (file_last_tz is not None and
-                            current_batch_tz != "Unknown" and
-                            file_last_tz != current_batch_tz)
+        # 按事件类型分组构建正文
+        grouped = self._format_entries(unique_entries)
 
-        # 写入
+        # 写入文件
         lines_written = 0
         with open(l1_path, 'w', encoding='utf-8') as f:
+            # 标题
+            f.write(f"# Memory Log - {date_str}\n\n")
+            lines_written += 2
 
-            if is_new_file:
-                # 新文件
-                f.write(f"# Memory Log - {date_str}\n")
-                f.write(f"# 时区: {current_tz}\n\n")
-                lines_written += 3
+            # 标签索引
+            f.write("| 记忆标签 | 事件类型 |\n")
+            f.write("|----------|----------|\n")
+            lines_written += 2
+            for line in index_lines:
+                f.write(line + "\n")
+                lines_written += 1
 
-                f.write("# L1 标签索引\n\n")
-                f.write("| 时间 | 记忆标签 | 事件类型 | 内容标签 |\n")
-                f.write("|------|----------|----------|----------|\n")
-                for line in new_index_lines:
-                    f.write(line + "\n")
+            # 分隔线
+            f.write("\n---\n\n")
+            lines_written += 3
+
+            # 正文：按事件类型分组
+            for event_type in sorted(grouped.keys()):
+                f.write(f"## {event_type}\n")
+                lines_written += 1
+                for entry_line in grouped[event_type]:
+                    f.write(entry_line + "\n")
                     lines_written += 1
+                f.write("\n")
+                lines_written += 1
 
-                f.write("\n---\n\n")
-                lines_written += 2
-
-                f.write("# L1 完整日志\n\n")
-                lines_written += 2
-
-                for entry in new_log_entries:
-                    f.write(entry + "\n")
-                    lines_written += entry.count("\n") + 1
-
-            else:
-                # 已有文件
-                parts = existing_content.split("\n---\n")
-                if len(parts) >= 2:
-                    first_part = parts[0]
-                    # 如果没有时区头部，插入
-                    if '# 时区:' not in first_part:
-                        first_lines = first_part.split("\n")
-                        insert_pos = 0
-                        for i, line in enumerate(first_lines):
-                            if line.startswith("# Memory Log"):
-                                insert_pos = i + 2
-                                break
-                        first_lines.insert(insert_pos, f"# 时区: {current_tz}")
-                        first_part = "\n".join(first_lines)
-
-                    f.write(first_part + "\n")
-                    lines_written += len(first_part.split("\n"))
-
-                    for line in new_index_lines:
-                        f.write(line + "\n")
-                        lines_written += 1
-
-                    f.write("\n---\n\n")
-                    lines_written += 2
-
-                    second_part = parts[1]
-                    # 确保有"# L1 完整日志"标记
-                    if not second_part.strip().startswith("# L1 完整日志") and not second_part.strip().startswith("# 时区变更"):
-                        second_part = "# L1 完整日志\n\n" + second_part
-
-                    # 时区变化：插入变更标注
-                    if needs_tz_change:
-                        # 找到第一个时区变化的时间点
-                        change_time = parsed_items[0]['time_display']
-                        for pi in parsed_items:
-                            if pi['tz'] != file_last_tz:
-                                change_time = pi['time_display']
-                                break
-                        tz_change_marker = f"# 时区变更: {current_batch_tz} from {change_time}\n\n"
-                        second_part = tz_change_marker + second_part
-                        lines_written += tz_change_marker.count("\n")
-
-                    f.write(second_part)
-                    lines_written += len(second_part.split("\n"))
-
-                    for entry in new_log_entries:
-                        f.write(entry + "\n")
-                        lines_written += entry.count("\n") + 1
-                else:
-                    # 格式损坏，当新文件处理
-                    f.write(f"# Memory Log - {date_str}\n")
-                    f.write(f"# 时区: {current_tz}\n\n")
-                    lines_written += 3
-                    f.write("# L1 标签索引\n\n")
-                    f.write("| 时间 | 记忆标签 | 事件类型 | 内容标签 |\n")
-                    f.write("|------|----------|----------|----------|\n")
-                    for line in new_index_lines:
-                        f.write(line + "\n")
-                        lines_written += 1
-                    f.write("\n---\n\n")
-                    f.write("# L1 完整日志\n\n")
-                    lines_written += 2
-                    for entry in new_log_entries:
-                        f.write(entry + "\n")
-                        lines_written += entry.count("\n") + 1
-
+        print(f"[L1Writer] 写入 {len(unique_entries)} 条到 {l1_path} ({lines_written} 行)")
         return lines_written
 
-    def write_pending_queue(self, messages: List[Dict[str, Any]]) -> Path:
-        """将新消息写入待处理队列文件"""
-        l1_path = self._get_l1_path()
-        queue_path = l1_path.parent / "pending_queue.json"
-        queue_path.parent.mkdir(parents=True, exist_ok=True)
-
-        queue_data = {
-            "pending_count": len(messages),
-            "messages": [
-                {
-                    "id": msg.get("id", ""),
-                    "role": msg.get("role", ""),
-                    "content": msg.get("content", ""),
-                    "timestamp": msg.get("timestamp", "")
-                }
-                for msg in messages
-            ]
-        }
-
-        with open(queue_path, 'w', encoding='utf-8') as f:
-            json.dump(queue_data, f, ensure_ascii=False, indent=2)
-
-        return queue_path
-
-    def mark_l3_consolidated(self, date_str: str, count: int = 0):
+    def _parse_existing_entries(self, l1_path: Path) -> List[Dict[str, Any]]:
         """
-        标记 L1 文件已被 L3 整合
-        
-        Args:
-            date_str: 日期字符串 (YYYY-MM-DD)
-            count: 整合的条目数
+        解析现有的 L1 文件，提取已有条目
+
+        Returns:
+            条目列表
         """
-        l1_path = self._get_l1_path(date_str)
-        if not l1_path.exists():
-            return False
-        
         try:
             content = l1_path.read_text(encoding='utf-8')
-            
-            # 检查是否已有标记
-            if "<!-- l3_consolidated:" in content:
-                # 更新现有标记
-                content = re.sub(
-                    r'<!-- l3_consolidated: [^;]+; count=\d+',
-                    f'<!-- l3_consolidated: {datetime.now().isoformat()}; count={count}',
-                    content
-                )
-            else:
-                # 添加新标记（在文件末尾）
-                marker = f"\n\n<!-- l3_consolidated: {datetime.now().isoformat()}; count={count}; agent={self.agent_id} -->\n"
-                content += marker
-            
-            l1_path.write_text(content, encoding='utf-8')
-            return True
-        except Exception as e:
-            print(f"[L1Writer] 标记 L3 整合失败 {date_str}: {e}")
-            return False
+        except Exception:
+            return []
+
+        entries = []
+        current_event_type = "CoreWork"
+
+        for line in content.split('\n'):
+            line = line.strip()
+
+            # 跳过空行、分隔线、标题
+            if not line or line == '---' or line.startswith('# '):
+                continue
+
+            # 跳过索引表头
+            if line.startswith('| 记忆标签') or line.startswith('|----------'):
+                continue
+
+            # 解析索引行：| To-do | CoreWork |
+            if line.startswith('| ') and line.endswith(' |'):
+                parts = line[2:-2].split(' | ')
+                if len(parts) == 2:
+                    continue  # 索引行不需要提取为条目
+
+            # 检测事件类型标题
+            if line.startswith('## '):
+                current_event_type = line[3:].strip()
+                continue
+
+            # 解析条目行：- [To-do] 内容
+            match = re.match(r'^- \[([^\]]+)\] (.+)$', line)
+            if match:
+                tag = match.group(1)
+                content_text = match.group(2)
+                entries.append({
+                    "tag": tag,
+                    "event_type": current_event_type,
+                    "content": content_text
+                })
+
+        return entries
+
+    def append(self, entries: List[Dict[str, Any]], date_str: str = None) -> int:
+        """
+        追加条目到现有 L1 文件（读取 + 合并 + 重写）
+
+        Args:
+            entries: 要追加的条目
+            date_str: 日期字符串
+
+        Returns:
+            写入行数
+        """
+        return self.write(entries, date_str)

@@ -18,7 +18,7 @@
     "我想要",
     "忘了吗"
   ],
-  "heartbeat_interval_minutes": 360,
+  "heartbeat_interval_minutes": 10,
   "state_file": "memory/heartbeat-state.json",
   "memory_rules": "~/.openclaw/memory-rules.md",
   "min_message_length": 10,
@@ -107,24 +107,5 @@
     "max_age_days": 3,
     "min_message_count": 50,
     "process_order": "newest_first"
-  },
-  "l3_consolidation": {
-    "enabled": true,
-    "time_window": {
-      "start_hour": 3,
-      "start_minute": 35,
-      "end_hour": 4,
-      "end_minute": 15
-    },
-    "lookback_days": 7,
-    "stale_threshold_days": 14,
-    "backup_threshold_percent": 30,
-    "silent_hours": {
-      "enabled": true,
-      "start_hour": 3,
-      "start_minute": 55,
-      "end_hour": 4,
-      "end_minute": 10
-    }
   }
 }

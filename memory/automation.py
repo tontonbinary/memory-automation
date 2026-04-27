@@ -20,12 +20,11 @@ from typing import List, Dict, Any, Optional, Tuple
 from .session_manager import SessionManager
 from .message_processor import MessageProcessor
 from .pattern_detector import PatternDetector
-from .session_distiller import SessionDistiller
+from .session_distiller import SessionCleaner
 from .l1_writer import L1Writer
 from .l1_reader import L1Reader, L1Data
 from .reference_manager import ReferenceManager
 from .processed_sessions_tracker import ProcessedSessionsTracker
-from .l3_consolidator import L3Consolidator
 from .l2_checker import L2Checker
 
 
@@ -60,23 +59,16 @@ class MemoryAutomation:
             config=self.config
         )
 
-        # 从 heartbeat-state 读取 api_key 注入 distiller
-        state = self.reference_manager._load_state()
-        api_key = state.get("api_key", "")
-        self.distiller = SessionDistiller(
-            min_message_length=self.config.get("distillation", {}).get("min_message_length", 10),
-            reference_manager=self.reference_manager
+        # 初始化消息清洗器
+        self.cleaner = SessionCleaner(
+            min_message_length=self.config.get("distillation", {}).get("min_message_length", 10)
         )
-        if api_key:
-            self.distiller.llm_config["api_key"] = api_key
 
         self.message_processor = MessageProcessor(
             agent_id=self.agent_id,
             config=self.config,
             session_manager=self.session_manager,
-            l1_writer=self.l1_writer,
-            distiller=self.distiller,
-            reference_manager=self.reference_manager
+            cleaner=self.cleaner
         )
         self.pattern_detector = PatternDetector(
             agent_id=self.agent_id,
@@ -248,120 +240,15 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
     def _check_config_status(self) -> Dict[str, Any]:
         """
-        检查配置状态
-        
-        现在主要检查 API key 是否可用（支持自动提取）
-
-        Returns:
-            {"ready": bool, "status": str, "source": str, ...}
+        检查配置状态（简化版 - 不再检查 API key）
         """
-        is_complete, missing, status_detail = self.reference_manager.is_complete()
-        
-        if is_complete:
-            return {
-                "ready": True,
-                "status": "ready",
-                "source": status_detail.get("api_key_source", "unknown"),
-                "message": f"配置就绪 (API key 来源: {status_detail.get('api_key_source', 'unknown')})"
-            }
-
-        # API key 不可用 - 提供详细的补救指导
-        missing_str = ", ".join(missing)
-        agent_id = self.agent_id or "{agent_id}"
-        
-        # 使用字符串拼接避免 f-string 中 JSON 大括号的问题
-        config_local_example = '''{
-    "llm": {
-      "api_key": "your-api-key",
-      "provider": "minimax",
-      "model": "MiniMax-Text-01"
-    }
-  }'''
-        
-        auth_profiles_example = '''{
-    "profiles": {
-      "minimax-portal:default": {
-        "type": "oauth",
-        "access": "your-api-key"
-      }
-    }
-  }'''
-        
-        help_message = f"""[MemoryAutomation] ❌ 需要配置 {missing_str}
-
-系统已尝试自动提取但未成功。请通过以下方式之一手动配置：
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-方法 1: 环境变量（推荐，立即生效）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  export MINIMAX_API_KEY="your-api-key"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-方法 2: 本地配置文件（推荐，不会被 Git 提交）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  创建：~/.openclaw/skills/memory-automation/config.local.json
-  
-  内容格式：
-  {config_local_example}
-
-  提示：config.local.json 已添加到 .gitignore，可安全存放真实 API key
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-方法 3: 模板配置文件
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  编辑：~/.openclaw/skills/memory-automation/config.json
-  
-  注意：此文件会被 Git 跟踪，请确保提交前 api_key 为空！
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-方法 4: OpenClaw 默认配置
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  确保以下文件存在且包含有效 key：
-  ~/.openclaw/agents/{agent_id}/agent/auth-profiles.json
-
-  格式示例：
-  {auth_profiles_example}
-
-详细文档：https://gitcode.com/Binary_Wu/Mauto/blob/main/README.md"""
-
         return {
-            "ready": False,
-            "status": "api_key_required",
-            "config_status": status_detail,
-            "message": help_message
+            "ready": True,
+            "status": "ready",
+            "message": "配置就绪（无需 API key）"
         }
 
-    def write_activation_flag(self, message: str = "Mauto 需要激活，请运行 'mauto activate' 或让用户触发一次 Mauto") -> Path:
-        """
-        写入激活标记文件，供 agent 检测并通知用户
 
-        Args:
-            message: 激活提示信息
-        """
-        if not self.agent_id:
-            return None
-
-        flag_dir = Path.home() / ".openclaw" / "workspaces" / self.agent_id / "workspace" / "memory"
-        flag_dir.mkdir(parents=True, exist_ok=True)
-        flag_path = flag_dir / ".mauto_activation_needed"
-
-        with open(flag_path, 'w', encoding='utf-8') as f:
-            f.write(f"{message}\n")
-            f.write(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-        print(f"[MemoryAutomation] 激活标记已写入: {flag_path}")
-        return flag_path
-
-    def clear_activation_flag(self) -> bool:
-        """清除激活标记"""
-        if not self.agent_id:
-            return False
-
-        flag_path = Path.home() / ".openclaw" / "workspaces" / self.agent_id / "workspace" / "memory" / ".mauto_activation_needed"
-        if flag_path.exists():
-            flag_path.unlink()
-            return True
-        return False
 
     # === 委托给 session_manager ===
 
@@ -431,83 +318,29 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         """
         return self.distiller.distill(messages)
 
-    def _generate_summary(self, items: List[Dict[str, Any]], lines_written: int) -> str:
+    def _generate_summary(self, saved_count: int, paths: List[Path]) -> str:
         """
-        生成处理完成的摘要信息
+        生成处理完成的摘要信息（简化版）
         
         Args:
-            items: 蒸馏的记忆项列表
-            lines_written: 写入的行数
+            saved_count: 保存的 clean_session 块数
+            paths: clean_session 文件路径列表
             
         Returns:
             格式化的摘要字符串
         """
-        if not items:
+        if not paths:
             return ""
         
-        # 获取 L1 文件路径（优先使用 item 中的 session_date，否则使用当前日期）
-        # item 中的 timestamp 格式："2026-03-25T06:31:15.487Z" 或 "2026-03-25T14:31:15+08:00"
-        date_str = None
-        for item in items:
-            ts = item.get('timestamp', '')
-            if ts and len(ts) >= 10:
-                date_str = ts[:10]  # 提取 YYYY-MM-DD
-                break
-        
-        if not date_str:
-            from datetime import datetime
-            date_str = datetime.now().strftime("%Y-%m-%d")
-        
-        # 获取 L1 路径模板
-        l1_template = self.config.get("output", {}).get("l1_template",
-            "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md")
-        l1_file = l1_template.format(agent=self.agent_id, date=date_str)
-        l1_file_expanded = os.path.expanduser(l1_file)
-        
-        # 统计各类型数量
-        type_counts = {}
-        event_type_counts = {}
-        for item in items:
-            item_type = item.get('type', 'Unknown')
-            event_type = item.get('event_type', 'Unknown')
-            type_counts[item_type] = type_counts.get(item_type, 0) + 1
-            event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
-        
-        # 生成摘要
         lines = []
         lines.append("\n" + "="*50)
-        lines.append("📋 记忆记录完成")
+        lines.append("📋 Clean Session 保存完成")
         lines.append("="*50)
-        lines.append(f"\n✓ 共提取 {len(items)} 条记忆，写入 {lines_written} 行")
+        lines.append(f"\n✓ 共保存 {saved_count} 个 clean_session 文件")
         
-        # 按记忆类型统计
-        if type_counts:
-            lines.append("\n【记忆类型】")
-            for t, count in sorted(type_counts.items(), key=lambda x: -x[1]):
-                lines.append(f"  • {t}: {count} 条")
-        
-        # 按事件类型统计
-        if event_type_counts:
-            lines.append("\n【事件类型】")
-            for et, count in sorted(event_type_counts.items(), key=lambda x: -x[1]):
-                lines.append(f"  • {et}: {count} 条")
-        
-        # 内容摘要（前3条）
-        lines.append("\n【内容摘要】")
-        for i, item in enumerate(items[:3], 1):
-            content = item.get('content', '')
-            # 截断过长的内容
-            if len(content) > 60:
-                content = content[:57] + "..."
-            item_type = item.get('type', 'Unknown')
-            lines.append(f"  {i}. [{item_type}] {content}")
-        
-        if len(items) > 3:
-            lines.append(f"  ... 还有 {len(items) - 3} 条")
-        
-        # 文件位置
-        lines.append(f"\n【记录位置】")
-        lines.append(f"  📁 {l1_file_expanded}")
+        lines.append("\n【文件位置】")
+        for path in paths:
+            lines.append(f"  📁 {path}")
         
         lines.append("\n" + "="*50)
         
@@ -582,18 +415,17 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
         print(f"[MemoryAutomation] 从 session 文件读取 {len(messages)} 条消息")
 
-        # 蒸馏消息
-        lines_written, items, _ = self.process_session(messages, force=True)
+        # 保存消息
+        saved_count, paths = self.process_session(messages, force=True)
 
         result["triggered"] = True
         result["reason"] = f"处理 session 文件: {os.path.basename(session_file)}"
-        result["items_distilled"] = len(items)
-        result["lines_written"] = lines_written
-        result["items"] = items  # 保存 items 用于生成摘要
+        result["saved_count"] = saved_count
+        result["paths"] = [str(p) for p in paths]
         
         # 生成摘要
-        if items:
-            summary = self._generate_summary(items, lines_written)
+        if paths:
+            summary = self._generate_summary(saved_count, paths)
             result["summary"] = summary
             print(summary)
 
@@ -602,30 +434,22 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
     # === 委托给 message_processor ===
 
     def process_session(self, messages: List[Dict[str, Any]],
-                       force: bool = False) -> Tuple[int, List[Dict[str, Any]], Optional[str]]:
+                       force: bool = False) -> Tuple[int, List[Path]]:
         """
-        处理会话消息，蒸馏并写入 L1
-
-        Args:
-            messages: 消息列表
-            force: 是否强制处理（忽略状态检查）
+        处理会话消息，保存 clean_session
 
         Returns:
-            (写入行数, 蒸馏项列表, 最后消息ID)
+            (保存块数, clean_session 路径列表)
         """
-        return self.message_processor.process_session(messages, force=force)
+        return self.message_processor.process_session(messages)
 
     def process_old_session(self, old_session_key: str,
-                           last_processed_msg_id: Optional[str] = None) -> Tuple[int, List[Dict[str, Any]]]:
+                           last_processed_msg_id: Optional[str] = None) -> Tuple[int, List[Path]]:
         """
-        处理旧 session 中未蒸馏的消息
-
-        Args:
-            old_session_key: 旧 session 的 session_key
-            last_processed_msg_id: 上次处理到的消息ID
+        处理旧 session 中未保存的消息
 
         Returns:
-            (distilled_count, items)
+            (保存块数, clean_session 路径列表)
         """
         return self.message_processor.process_old_session(old_session_key, last_processed_msg_id)
 
@@ -676,13 +500,12 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         Returns:
             处理结果
         """
-        # 静默时段检查
+        # 静默时段检查（简化 - 不再依赖 l3_consolidation）
         from datetime import datetime
         now = datetime.now()
-        l3_config = self.config.get("l3_consolidation", {})
-        silent_hours = l3_config.get("silent_hours", {})
+        silent_hours = self.config.get("silent_hours", {})
         
-        if silent_hours.get("enabled", True):
+        if silent_hours.get("enabled", False):
             sh_start_hour = silent_hours.get("start_hour", 3)
             sh_start_minute = silent_hours.get("start_minute", 55)
             sh_end_hour = silent_hours.get("end_hour", 4)
@@ -848,13 +671,12 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         Returns:
             处理结果
         """
-        # 静默时段检查
+        # 静默时段检查（简化 - 不再依赖 l3_consolidation）
         from datetime import datetime
         now = datetime.now()
-        l3_config = self.config.get("l3_consolidation", {})
-        silent_hours = l3_config.get("silent_hours", {})
+        silent_hours = self.config.get("silent_hours", {})
         
-        if silent_hours.get("enabled", True):
+        if silent_hours.get("enabled", False):
             sh_start_hour = silent_hours.get("start_hour", 3)
             sh_start_minute = silent_hours.get("start_minute", 55)
             sh_end_hour = silent_hours.get("end_hour", 4)
@@ -867,19 +689,17 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
             if silent_start <= current_minutes <= silent_end:
                 return {
                     "triggered": False,
-                    "reason": f"跳过执行：避开 Auto-Dream 运行时间窗口 ({sh_start_hour:02d}:{sh_start_minute:02d}-{sh_end_hour:02d}:{sh_end_minute:02d})"
+                    "reason": f"当前处于静默时段（{sh_start_hour:02d}:{sh_start_minute:02d}-{sh_end_hour:02d}:{sh_end_minute:02d}），建议稍后再试"
                 }
 
-        # 无 agent_id → 跳过执行，写入激活标记
+        # 无 agent_id → 跳过执行
         if not self.agent_id:
             result = {
                 "triggered": False,
                 "reason": "agent_id 未指定，跳过执行",
-                "pending_count": 0,
-                "activation_needed": True
+                "pending_count": 0
             }
-            print("[MemoryAutomation] Heartbeat 触发但无 agent_id，写入激活标记")
-            self.write_activation_flag()
+            print("[MemoryAutomation] Heartbeat 触发但无 agent_id，跳过执行")
             return result
 
         result = {
@@ -894,11 +714,10 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         # 首次运行检查：确保 heartbeat 文件存在
         self._ensure_heartbeat_file()
 
-        # 配置检查（自动提取 API key）
+        # 配置检查（简化 - 不再需要 API key）
         config_status = self._check_config_status()
         if not config_status["ready"]:
-            result["status"] = "api_key_required"
-            result["config_status"] = config_status["config_status"]
+            result["status"] = "config_required"
             result["reason"] = config_status["message"]
             return result
         
@@ -912,79 +731,40 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
             return result
 
         # ===== 第一步：Session 切换处理（无条件执行）=====
-        # 检查是否需要处理旧 session（session_key 变化时）
-        # 注意：此逻辑不受间隔时间影响，确保消息不遗漏
         state = self.session_manager._load_state()
         last_session = state.get("last_session_key")
         last_msg = state.get("last_processed_msg_id")
         
         if last_session and last_session != session_key:
             print(f"[MemoryAutomation] [Heartbeat] 检测到 session 切换: {last_session} -> {session_key}")
-            print(f"[MemoryAutomation] [Heartbeat] 先处理旧 session 的未蒸馏消息...")
+            print(f"[MemoryAutomation] [Heartbeat] 先处理旧 session 的未保存消息...")
 
-            old_items_count, old_items = self.process_old_session(last_session, last_msg)
+            old_saved_count, old_paths = self.process_old_session(last_session, last_msg)
             result["old_session_processed"] = True
-            result["old_session_items"] = old_items_count
+            result["old_session_saved"] = old_saved_count
             
-            if old_items and old_items_count > 0:
-                print(f"[MemoryAutomation] [Heartbeat] 旧 session 处理完成: {old_items_count} 项已蒸馏")
-                old_summary = self._generate_summary(old_items, old_items_count * 7)
+            if old_paths and old_saved_count > 0:
+                print(f"[MemoryAutomation] [Heartbeat] 旧 session 处理完成: {old_saved_count} 个文件")
+                old_summary = self._generate_summary(old_saved_count, old_paths)
                 print("\n【旧 Session 处理结果】")
                 print(old_summary)
             else:
                 print(f"[MemoryAutomation] [Heartbeat] 旧 session 无遗漏消息或已全部处理")
         
         # ===== 第二步：积压处理（当前 session 无消息时）=====
-        # 无论间隔时间是否到达，都检查积压（积压检查成本低）
         if not messages:
             print("[MemoryAutomation] [Heartbeat] 活跃 session 无新消息，检查积压...")
             backlog_result = self._check_and_process_backlog()
             if backlog_result:
                 result["backlog_processed"] = backlog_result
         
-        # ===== 第三步：L3 Auto-Dream 整合（时间窗口内执行）=====
-        # 检查是否在 L3 运行窗口
-        now = datetime.now()
-        l3_config = self.config.get("l3_consolidation", {})
-        time_window = l3_config.get("time_window", {})
-        start_hour = time_window.get("start_hour", 4)
-        start_minute = time_window.get("start_minute", 0)
-        end_hour = time_window.get("end_hour", 5)
-        end_minute = time_window.get("end_minute", 0)
-        
-        # 计算当前时间是否在窗口内
-        current_minutes = now.hour * 60 + now.minute
-        start_minutes = start_hour * 60 + start_minute
-        end_minutes = end_hour * 60 + end_minute
-        
-        is_l3_window = start_minutes <= current_minutes <= end_minutes
-        
-        if l3_config.get("enabled", True) and is_l3_window:
-            print("[MemoryAutomation] [Heartbeat] 进入 L3 整合窗口，执行记忆整合...")
-            try:
-                l3_consolidator = L3Consolidator(self.agent_id, self.config)
-                l3_result = l3_consolidator.run_consolidation()
-                result["l3_consolidated"] = {
-                    "success": l3_result.get("success", False),
-                    "new_entries": l3_result.get("new_entries", 0),
-                    "has_report": bool(l3_result.get("report"))
-                }
-                if l3_result.get("report"):
-                    print(f"\n{l3_result['report']}\n")
-            except Exception as e:
-                print(f"[MemoryAutomation] [Heartbeat] L3 整合异常: {e}")
-                result["l3_consolidated"] = {"success": False, "error": str(e)}
-        
-        # ===== 第四步：检查活跃 session 处理间隔 =====
-        # L3 窗口内特殊放行：只执行 L3 不强制要求 L1 间隔
+        # ===== 第三步：检查活跃 session 处理间隔 =====
         interval = self.config.get("heartbeat_interval_minutes", 360)
         should_process, reason = self.session_manager.check_should_process(
             session_key, interval
         )
         
-        # 在 L3 窗口内：允许只执行 L3 后返回（不解耦 L1）
-        # 但 L1 仍然需要满足间隔要求
-        if not should_process and not (is_l3_window and result.get("l3_consolidated")):
+        if not should_process:
             result["reason"] = f"间隔时间未到: {reason}"
             if result.get("backlog_processed"):
                 result["reason"] += "（但已检查积压）"
@@ -1003,17 +783,16 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         update_msg_id = last_msg_id or (messages[-1].get("id") if messages else None)
         self.session_manager.update_last(session_key, update_msg_id, len(messages))
 
-        # 直接处理（不再写 pending_queue）
-        lines_written, items, final_msg_id = self.message_processor.process_session(messages, force=True)
+        # 保存 clean_session（不再蒸馏）
+        saved_count, paths = self.message_processor.process_session(messages, force=True)
 
-        # 检查处理结果
-        if lines_written == 0 and len(items) == 0:
+        # 检查结果
+        if saved_count == 0:
             result.update({
                 "triggered": False,
-                "reason": "Heartbeat 处理完成，但蒸馏未产生结果（LLM 失败或无有效内容）",
+                "reason": "Heartbeat 处理完成，但未保存 clean_session",
                 "pending_count": 0,
-                "items_distilled": 0,
-                "lines_written": 0,
+                "saved_count": 0,
                 "session_key": session_key,
                 "needs_attention": True
             })
@@ -1022,30 +801,16 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                 "triggered": True,
                 "reason": f"Heartbeat 处理完成",
                 "pending_count": 0,
-                "items_distilled": len(items),
-                "lines_written": lines_written,
+                "saved_count": saved_count,
                 "session_key": session_key
             })
             
-            # 生成并打印摘要
-            if items:
-                summary = self._generate_summary(items, lines_written)
+            # 生成摘要
+            if paths:
+                summary = self._generate_summary(saved_count, paths)
                 result["summary"] = summary
                 print(summary)
-            
-            # ===== L2 自我改进检查 =====
-            try:
-                l2_checker = L2Checker(self.agent_id)
-                l2_report = l2_checker.generate_reminder_report()
-                if l2_report:
-                    print(l2_report)
-            except Exception as e:
-                # L2 检查失败不应影响主流程
-                print(f"[MemoryAutomation] L2 检查异常: {e}")
-                
-        # 注意：积压检查已提前到 should_process 判断之前（第 890 行附近）
-        # Fix: #1 - 确保积压处理不受间隔时间影响
-        
+
         return result
 
     def run_process_backlog(self, max_sessions: int = 1, force: bool = False) -> Dict[str, Any]:
@@ -1324,89 +1089,6 @@ def _handle_l2_command(args: list) -> dict:
         return {"error": f"未知 L2 子命令: {subcmd}"}
 
 
-def _handle_l3_command(args: list) -> dict:
-    """
-    处理 L3 相关子命令 (L2→L3 提升)
-    
-    命令：
-      l3 promote --agent <id> [--dry-run]
-      l3 status --agent <id>
-    """
-    from .l3_writer import L3Writer
-    
-    if len(args) < 3:
-        print("L3 长期记忆命令：")
-        print("  l3 promote --agent <id> [--dry-run] - 将符合条件的 L2 提升到 L3")
-        print("  l3 status --agent <id> - 查看 L3 状态")
-        return {"error": "缺少子命令"}
-    
-    subcmd = args[2].lower()
-    
-    # 解析参数
-    agent_id = None
-    dry_run = False
-    
-    i = 3
-    while i < len(args):
-        if args[i] == "--agent" and i + 1 < len(args):
-            agent_id = args[i + 1]
-            i += 2
-        elif args[i] == "--dry-run":
-            dry_run = True
-            i += 1
-        else:
-            i += 1
-    
-    if not agent_id:
-        return {"error": "缺少 --agent 参数"}
-    
-    if subcmd == "promote":
-        writer = L3Writer(agent_id=agent_id)
-        result = writer.run_promotion(dry_run=dry_run)
-        
-        if result.get("disabled"):
-            print("\n[L3 Promote]")
-            print("  状态: 已禁用")
-            print("  说明: L2→L3 自动提升功能当前已关闭")
-            print("  原因: 等待重新设计更好的提升逻辑")
-            print("  预留接口: add_entry() 可用于手动添加条目")
-            return {
-                "success": True,
-                "action": "l3_promote",
-                "disabled": True,
-                "message": "L2→L3 promotion is disabled, will be redesigned"
-            }
-        
-        return {
-            "success": True,
-            "action": "l3_promote",
-            "agent": agent_id,
-            "insights_promoted": result["insights_promoted"],
-            "patterns_promoted": result["patterns_promoted"],
-            "dry_run": dry_run
-        }
-    
-    elif subcmd == "status":
-        l3_path = Path(f"~/self-improving/memory.md").expanduser()
-        exists = l3_path.exists()
-        
-        print(f"\n[L3 Status] Agent: {agent_id}")
-        print(f"  L3 文件: {l3_path}")
-        print(f"  存在: {exists}")
-        
-        if exists:
-            content = l3_path.read_text(encoding='utf-8')
-            entry_count = content.count("### ")
-            print(f"  条目数: {entry_count}")
-        
-        return {
-            "success": True,
-            "l3_path": str(l3_path),
-            "exists": exists
-        }
-    
-    else:
-        return {"error": f"未知 L3 子命令: {subcmd}"}
 
 
 def main():
@@ -1444,12 +1126,6 @@ def main():
     # L2 子命令处理
     if mode == "l2":
         result = _handle_l2_command(sys.argv)
-        print("\n" + json.dumps(result, ensure_ascii=False))
-        sys.exit(0 if result.get("success") else 1)
-    
-    # L3 子命令处理
-    if mode == "l3":
-        result = _handle_l3_command(sys.argv)
         print("\n" + json.dumps(result, ensure_ascii=False))
         sys.exit(0 if result.get("success") else 1)
 
@@ -1543,7 +1219,7 @@ def main():
     
     else:
         print(f"错误: 未知模式 '{mode}'")
-        print("用法: python -m memory.automation [manual|heartbeat|l2|l3|process-backlog]")
+        print("用法: python -m memory.automation [manual|heartbeat|l2|process-backlog]")
         sys.exit(1)
 
     # 输出 JSON 结果（供调用方解析）

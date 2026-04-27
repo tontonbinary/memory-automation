@@ -14,7 +14,7 @@ __author__ = "OpenClaw"
 
 # 核心模块
 from .session_manager import SessionManager
-from .session_distiller import SessionDistiller
+from .session_distiller import SessionCleaner
 from .automation import MemoryAutomation
 
 # L2 子模块（从 l2-extraction 整合）
@@ -32,13 +32,12 @@ from .l2_extraction import (
     INSIGHTS_FILE,
 )
 
-# L3 模块（L2→L3 提升接口，当前已禁用自动提升）
-from .l3_writer import L3Writer
+
 
 __all__ = [
     # 核心
     "SessionManager",
-    "SessionDistiller",
+    "SessionCleaner",
     "MemoryAutomation",
     # L2 实时改进
     "add_correction",
@@ -53,6 +52,4 @@ __all__ = [
     "CORRECTIONS_FILE",
     "PATTERNS_FILE",
     "INSIGHTS_FILE",
-    # L3 长期记忆
-    "L3Writer",
 ]

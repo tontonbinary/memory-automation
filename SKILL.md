@@ -1,119 +1,129 @@
-# Memory Automation (Mauto) - Skill 操作指南
+# Memory Automation (Mauto) - Skill 操作指南（简化版）
 
-> 本 Skill 实现 L0→L1→L2→L3 的完整记忆流转架构
-> L2 取消自动 insights 生成模块，insights 改由 Agent 主动调用 LLM 从 patterns 提炼后写入 insights.md
+> 本 Skill 实现 L0→L1 的记忆保存架构
+> L3 auto-dream 已移除，L1 由 Agent 主动总结生成
+> L2 保持不变（corrections/patterns/insights）
 
 ---
 
 ## 1. Agent 启动时加载记忆
 
-Agent 启动后，**应当**执行以下记忆加载操作：
-
 ### 1.1 加载 L1 标签（最近 3 天）
 ```python
-# 使用 L1Reader 的懒加载功能
 from memory.l1_reader import L1Reader
 
 l1_reader = L1Reader(agent_id, config)
 
 recent_tags = set()
-for i in range(3):  # 最近3天
+for i in range(3):
     date_str = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
     l1_data = l1_reader.load_index_only(date_str)
     if l1_data and l1_data.index:
         for entry in l1_data.index:
-            tags_str = entry.get("tags", "")
-            if tags_str and tags_str != "-":
-                recent_tags.update([t.strip() for t in tags_str.split() if t.strip()])
-
-# recent_tags 可用于上下文注入
-```
-
-### 1.2 加载 L3 长期记忆
-```python
-l3_path = Path(f"~/.openclaw/workspaces/{agent_id}/workspace/MEMORY.md").expanduser()
-
-if l3_path.exists():
-    l3_content = l3_path.read_text(encoding='utf-8')
-    # 提取关键决策、经验教训、用户偏好等章节
-    # 用于系统 prompt 注入
+            tag = entry.get("tag", "")
+            if tag:
+                recent_tags.add(tag)
 ```
 
 ---
 
-## 2. L2 自动触发（纠正检测）
+## 2. Heartbeat 触发（自动执行）
 
-在**每次用户消息处理时**，Agent **应当**检测用户是否表达纠正意图：
-
-### 2.1 纠正关键字列表
-```python
-CORRECTION_KEYWORDS = [
-    # 直接纠正
-    "改", "改正", "修改", "调整", "更正",
-    "不对", "错了", "错误", "有误",
-    # 未来纠正
-    "下次", "以后", "往后", "将来",
-    "记得", "别忘了", "注意", "要",
-    # 否定纠正
-    "不要", "别", "不需要", "不用",
-    # 强调纠正
-    "必须", "一定", "务必", "千万",
-]
-```
-
-### 2.2 检测逻辑
-```python
-from memory.l2_extraction import add_correction
-
-# 检测用户消息
-message_lower = user_message.lower()
-matched_keywords = [kw for kw in CORRECTION_KEYWORDS if kw.lower() in message_lower]
-
-if matched_keywords:
-    # 提取纠正内容
-    correction_content = user_message
-    for kw in CORRECTION_KEYWORDS:
-        correction_content = correction_content.replace(kw, "")
-    correction_content = correction_content.strip()
-    
-    # 添加到 L2 corrections
-    add_correction(
-        agent_id=agent_id,
-        topic="general",
-        wrong=correction_content,
-        correct="[待明确]",
-        source="binary",
-        context=f"关键字: {', '.join(matched_keywords)}"
-    )
-```
-
-### 2.3 触发示例
-| 用户消息 | 检测类型 | 记录内容 |
-|---------|---------|---------|
-| "下次记得用 Python" | future | "记得用 Python" |
-| "改一下这个逻辑" | immediate | "一下这个逻辑" |
-| "不要这么写了" | negative | "这么写了" |
-| "这个不对，应该那样" | immediate | "这个，应该那样" |
-
----
-
-## 3. Heartbeat 触发（自动执行）
-
-Mauto 会自动处理以下流程，Agent 无需干预：
+Mauto Heartbeat 现在只做一件事：**保存 clean_session**
 
 ```
 Step 1: Session Switch (无条件)
-  └─ 检测 session_key 变化 → 处理旧 session 遗留消息
+  └─ 检测 session_key 变化 → 保存旧 session 的 clean_session
 
 Step 2: Backlog Processing (无条件)
   └─ 检查积压的历史 session → 每心跳处理 1 个积压
 
-Step 3: L3 Auto-Dream (时间窗口: 04:00-05:00)
-  └─ 扫描未整合的 L1 → 整合到 L3 MEMORY.md
-
-Step 4: Active Session (条件: 不在静默时段)
-  └─ 处理当前 session 的新消息 → L0→L1 蒸馏
+Step 3: Active Session (条件: 不在静默时段)
+  └─ 处理当前 session 的新消息 → 清洗 → 保存 clean_session
 ```
+
+**不再做的事情**：
+- ❌ 不再调用 LLM API 蒸馏
+- ❌ 不再自动写入 L1
+- ❌ 不再触发 L3 Auto-Dream
+
+---
+
+## 3. Agent 自主总结 L1（新增）
+
+### 3.1 何时总结
+
+Agent **应当**在以下时机主动总结并写入 L1：
+- 每次 session 结束前
+- 用户说"总结一下今天"
+- 用户说"记一下"
+- Agent 认为有重要内容需要记录时
+
+### 3.2 读取 clean_session
+
+```python
+# 读取当日 clean_session
+clean_dir = Path(f"~/.openclaw/agents/{agent_id}/clean_session").expanduser()
+clean_files = sorted(clean_dir.glob("*.json"))
+
+for f in clean_files:
+    data = json.loads(f.read_text())
+    # data 格式: [{"r": "u/a", "s": sender, "t": timestamp, "c": content}, ...]
+```
+
+### 3.3 写入 L1（新格式）
+
+```python
+from memory.l1_writer import L1Writer
+
+writer = L1Writer(agent_id, config)
+
+entries = [
+    {
+        "tag": "To-do",           # Event|Preference|To-do|Output|Emotion
+        "event_type": "CoreWork",  # CoreWork|EventsOutside|SelfEvolve|SocialEcology|RuleDecision
+        "content": "用户要求简化 Mauto，去除 L3 auto-dream"
+    },
+    {
+        "tag": "Preference",
+        "event_type": "SocialEcology",
+        "content": "用户偏好简洁日志格式"
+    }
+]
+
+writer.write(entries, "2026-04-27")
+```
+
+### 3.4 L1 新格式示例
+
+```markdown
+# Memory Log - 2026-04-27
+
+| 记忆标签 | 事件类型 |
+|----------|----------|
+| To-do | CoreWork |
+| Preference | SocialEcology |
+
+---
+
+## CoreWork
+- [To-do] 用户要求简化 Mauto：去除 L3 auto-dream，L1 改为 agent 主动提炼
+- [Event] 发现 L3Consolidator 有 8 步流程，太重
+
+## SocialEcology
+- [Preference] 用户偏好简洁日志格式，索引只保留记忆标签和事件类型
+```
+
+### 3.5 格式规则
+
+**索引表**：
+- 只保留「记忆标签」和「事件类型」两列
+- 去重：同一标签+事件类型组合只出现一次
+
+**正文**：
+- 按 `## 事件类型` 分组
+- 每条格式：`- [记忆标签] 内容摘要`
+- 内容简洁，不要复述对话，要提炼要点
 
 ---
 
@@ -122,179 +132,81 @@ Step 4: Active Session (条件: 不在静默时段)
 ```
 ~/.openclaw/workspaces/{agent_id}/
 ├── workspace/
-│   ├── MEMORY.md                    # L3 长期记忆
 │   └── memory/
-│       ├── {YYYY-MM-DD}.md         # L1 每日日志
-│       ├── l3-consolidation/        # L3 整合日志
-│       └── L2/                      # L2 自我改进层
+│       ├── {YYYY-MM-DD}.md         # L1 每日日志（Agent 主动写入）
+│       └── L2/                      # L2 自我改进层（保持不变）
 │           ├── corrections.jsonl
 │           ├── patterns.md
-│           └── insights.md          # Agent 手动维护
-└── memory/
-    └── heartbeat-state.json         # 状态文件
+│           └── insights.md
+└── clean_session/                   # Heartbeat 自动保存的清洗后消息
+    └── {MMDD}#L{N}.json
 ```
 
 ---
 
 ## 5. 记忆类型系统 (5+5)
 
-### 5 类记忆 (Item Types)
-- `Memory` - 重要事件/决策 → L3 Key Decisions
-- `Preference` - 用户偏好 → L3 User Preferences
-- `To-do` - 待办事项 → L3 Open Threads
-- `Output` - 输出记录 → L3 Project Episodes
-- `Emotion` - 情绪状态 → 附加到其他条目
+### 5 类记忆标签
+- `Event` - 客观事实、问题、需求（包括踩坑）
+- `Preference` - 用户偏好、习惯、忌讳
+- `To-do` - 待办、承诺、需遵守事项
+- `Output` - 产出物
+- `Emotion` - 只记积极/负面（附加在其他标签上，不单独成条）
 
-### 5 维事件 (Event Types)
-- `CoreWork` - 核心工作任务
-- `EventsOutside` - 外部事件
-- `SelfEvolve` - 自我改进/学习
-- `SocialEcology` - 社交/生态互动
-- `RuleDecision` - 规则/决策制定
+### 5 维事件类型
+- `CoreWork` - 本职核心业务
+- `EventsOutside` - 临时辅助、无重要成果
+- `SelfEvolve` - 知识/纠错/习惯养成
+- `SocialEcology` - 用户关系/组织/环境规律
+- `RuleDecision` - 硬性规则、流程、约束
 
 ---
 
-## 6. CLI 命令（手动触发）
+## 6. CLI 命令
 
 ```bash
-# L1→L2 自动提升（提取 SelfEvolve 到 corrections）
-python -m memory.l1_to_l2 --agent {agent_id} --days 7
-
-# L2 管理
-python -m memory.automation l2 correct --agent {agent_id} --topic "..." --wrong "..." --correct "..."
-python -m memory.automation l2 process --agent {agent_id} [--min 3] [--dry-run]
-python -m memory.automation l2 status --agent {agent_id}
-
-# L3 整合（手动触发）
-python -m memory.automation l3 consolidate --agent {agent_id}
-
-# Heartbeat（单次）
+# Heartbeat（只保存 clean_session）
 python -m memory.automation heartbeat --agent {agent_id}
+
+# 手动触发（只保存 clean_session）
+python -m memory.automation manual --agent {agent_id}
+
+# 处理积压 session
+python -m memory.automation process-backlog --agent {agent_id}
+
+# L2 管理（保持不变）
+python -m memory.automation l2 correct --agent {agent_id} --topic "..." --wrong "..." --correct "..."
+python -m memory.automation l2 process --agent {agent_id}
+python -m memory.automation l2 status --agent {agent_id}
 ```
 
 ---
 
-## 7. Agent 主动提炼：Patterns → insights.md
+## 7. L2 自我改进层（保持不变）
 
-> `insights.py` 自动代码已移除，insights 不再由 Mauto 自动生成。
-> Agent **应当**在合适的时机（如用户要求总结、或 patterns 积累到一定数量时），主动读取 `patterns.md` 和 `corrections.jsonl`，通过 LLM 提炼为洞察原则，并写入 `insights.md`。
-
-### 7.1 何时触发
-- 用户说"总结一下我们的合作原则"
-- 用户说"你还记得我说过什么吗"
-- `patterns.md` 中积累了 5+ 条高置信度 pattern
-- 定期（如每周）主动回顾一次
-
-### 7.2 读取 L2 内容
-```python
-from memory.l2_extraction import get_patterns, get_corrections
-
-patterns = get_patterns(agent_id)
-corrections = get_corrections(agent_id, limit=20)
-
-# 筛选高置信度 patterns（可选）
-high_conf = [p for p in patterns if p.get("confidence", 0) >= 7]
-```
-
-### 7.3 LLM 提炼 Prompt
-
-**系统提示：**
-```
-你是一位记忆整理专家。你的任务是从 Agent 的纠正记录（corrections）和行为模式（patterns）中，提炼出简洁、可执行的洞察原则。
-
-输入格式：
-- corrections: JSON Lines 记录，包含 topic/wrong/correct/count
-- patterns: Markdown 记录，包含 pattern_key/description/count/confidence
-
-要求：
-1. 只提炼 **重复出现 2 次以上** 或 **高置信度（confidence ≥ 7）** 的模式
-2. 每条原则用一句话表达，结构为："在 [场景] 时，应当 [做法]，避免 [反例]。"
-3. 去除过于具体的一次性事件，保留可泛化的行为准则
-4. 如果多个 corrections 共享同一个 topic，合并为一条原则
-5. 输出格式为 JSON 数组：
-[
-  {
-    "title": "简短标题（如：代码风格偏好）",
-    "principle": "具体原则内容"
-  }
-]
-```
-
-**用户提示示例：**
-```
-请根据以下 patterns 和 corrections，提炼 3-5 条应写入 insights.md 的原则。
-
-Patterns:
-{{patterns_text}}
-
-Corrections:
-{{corrections_text}}
-```
-
-### 7.4 写入 insights.md
-```python
-from memory.l2_extraction import add_insight
-
-for item in llm_response:
-    add_insight(
-        agent_id=agent_id,
-        title=item["title"],
-        principle=item["principle"],
-        status="verified",  # 或 pending，视验证程度而定
-        related_patterns=[...]  # 可选：关联的 pattern keys
-    )
-```
-
-### 7.5 写入后清理（可选）
-- 如果某些 corrections 已经充分吸收到 insights.md，可以手动归档
-- patterns 保留作为原始证据，不建议删除
+> L2 机制不变，corrections/patterns/insights 继续由 Agent 手动维护。
+> 详见原 SKILL.md 第 7 节。
 
 ---
 
-## 8. 高级：重新处理已处理过的 Session
-
-当需要**重新蒸馏**某个已处理过的 session 文件时（例如修正错误或补充遗漏）：
-
-### 8.1 CLI 方式
-```bash
-# 指定 session 文件路径直接处理（绕过 processed-sessions 检查）
-python -m memory.automation manual \
-    --agent {agent_id} \
-    --session /path/to/session_file.jsonl
-```
-
-### 8.2 Python API 方式
-```python
-from memory.automation import MemoryAutomation
-
-automation = MemoryAutomation(agent_id="your_agent_id")
-
-# 直接处理指定文件（不检查是否已处理）
-result = automation._process_session_file("/path/to/session_file.jsonl")
-
-print(f"蒸馏项: {result['items_distilled']}")
-print(f"写入行: {result['lines_written']}")
-```
-
-### 8.3 注意事项
-- **会重复写入 L1**：重新处理会再次追加到 L1 文件（如需清理旧条目，需手动编辑 L1）
-- **不会自动更新 tracker**：如需标记为已处理，需手动调用 `ProcessedSessionsTracker.mark_processed()`
-- **适用场景**：修复错误、补充遗漏、调整蒸馏策略后的重新处理
-
----
-
-## 9. 配置项 (config.json)
+## 8. 配置项 (config.json)
 
 ```json
 {
   "agent_id": "your_agent_id",
   "heartbeat_interval_minutes": 360,
-  "l3_consolidation": {
-    "enabled": true,
-    "time_window": {"start_hour": 4, "start_minute": 0, "end_hour": 5, "end_minute": 0},
-    "silent_hours": {"enabled": true, "start_hour": 3, "start_minute": 55, "end_hour": 4, "end_minute": 10}
+  "output": {
+    "clean_session_dir": "~/.openclaw/agents/{agent}/clean_session",
+    "l1_template": "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md"
   },
-  "pattern_keywords": ["我喜欢", "我决定", "我偏好"],
-  "pattern_threshold": 3
+  "session_processing": {
+    "process_inactive": true,
+    "max_age_days": 3,
+    "min_message_count": 50
+  }
 }
 ```
+
+**已移除的配置**：
+- ❌ `llm` - 不再需要 LLM API
+- ❌ `l3_consolidation` - L3 Auto-Dream 已删除
