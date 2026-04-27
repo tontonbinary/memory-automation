@@ -80,13 +80,13 @@ class L1Writer:
                 existing_by_category[cat].append(content)
 
         # 构建索引：有内容的分类
-        index_lines = []
+        index_items = []
         for cat in self.CATEGORIES:
             if existing_by_category[cat]:
                 # 索引摘要：取第一个条目的前 8 字
                 first_content = existing_by_category[cat][0]
                 summary = first_content[:8]
-                index_lines.append(f"| {cat} | {summary} |")
+                index_items.append((cat, summary))
 
         # 写入文件
         lines_written = 0
@@ -97,13 +97,21 @@ class L1Writer:
 
             # 索引表
             f.write("## 索引\n")
-            f.write("| CoreWork | |\n")
-            f.write("|----------|----------|\n")
-            lines_written += 3
-
-            for line in index_lines:
-                f.write(line + "\n")
-                lines_written += 1
+            lines_written += 1
+            if index_items:
+                # 正确的表格格式：表头 + 分隔线 + 数据行
+                f.write("| 分类 | 8字摘要 |\n")
+                f.write("|----------|----------|\n")
+                lines_written += 2
+                # 每一行：| 分类 | 8字摘要 |
+                for cat, summary in index_items:
+                    f.write(f"| {cat} | {summary} |\n")
+                    lines_written += 1
+            else:
+                # 无任何内容时的空表头
+                f.write("| 分类 | 8字摘要 |\n")
+                f.write("|----------|----------|\n")
+                lines_written += 2
 
             # 分隔线
             f.write("\n---\n\n")
@@ -149,21 +157,13 @@ class L1Writer:
             if not line_stripped or line_stripped == '---' or line_stripped.startswith('# Memory Log'):
                 continue
 
-            # 跳过索引表头
-            if line_stripped.startswith('| CoreWork') or line_stripped.startswith('|----------'):
+            # 跳过索引表行（通用格式：| xxx | yyy |）
+            if line_stripped.startswith('| ') and ' | ' in line_stripped and line_stripped.endswith(' |'):
                 continue
 
             # 检测分类标题
             if line_stripped.startswith('## '):
                 current_cat = line_stripped[3:].strip()
-                continue
-
-            # 跳过索引表行
-            if line_stripped.startswith('| ') and ' | ' in line_stripped and line_stripped.endswith(' |'):
-                continue
-
-            # 跳过索引表中的 | CoreWork | |
-            if line_stripped.startswith('| CoreWork | |'):
                 continue
 
             # 解析内容行

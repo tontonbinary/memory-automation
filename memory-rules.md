@@ -12,56 +12,63 @@
 ```markdown
 # Memory Log - 2026-04-27
 
-| 记忆标签 | 事件类型 |
+## 索引
+| CoreWork | Mauto简化 |
 |----------|----------|
-| To-do | CoreWork |
-| Preference | SocialEcology |
+| SocialEcology | 偏好简洁 |
+| To-do | 凌晨提醒 |
+| Output | L1新格式 |
 
 ---
 
 ## CoreWork
-- [To-do] 用户要求简化 Mauto：去除 L3 auto-dream，L1 改为 agent 主动提炼
-- [Event] 发现 L3Consolidator 有 8 步流程，太重
+用户要求简化 Mauto：去除 L3 auto-dream，L1 改为 agent 主动提炼
+
+## EventsOutside
+（空）
 
 ## SocialEcology
-- [Preference] 用户偏好简洁日志格式，索引只保留记忆标签和事件类型
+用户偏好简洁日志格式
+
+## SelfEvolve
+（空）
+
+## RuleDecision
+（空）
+
+## To-do
+每天凌晨 03:00-04:00 提醒总结前一日 clean_session
+
+## Output
+实现了新的 L1 格式：7 分类，索引 8 字摘要
 ```
 
 ### 格式规则
 
-**标签索引**：
-- 只保留「记忆标签」和「事件类型」两列
-- 去重：同一标签+事件类型组合只出现一次
-- 不记录时间和内容标签
+**7 分类（固定顺序）**：
+1. CoreWork - 本职核心业务
+2. EventsOutside - 临时辅助、无重要成果
+3. SocialEcology - 用户关系/组织/环境规律
+4. SelfEvolve - 知识/纠错/习惯养成
+5. RuleDecision - 硬性规则、流程、约束
+6. To-do - 待办、承诺、需遵守事项
+7. Output - 产出物（含储存路径）
+
+**索引**：
+- 只出现有内容的分类
+- 每个分类一行，8 字以内摘要
+- 无内容的分类不出现
 
 **正文**：
-- 按 `## 事件类型` 分组（5类：CoreWork, EventsOutside, SelfEvolve, SocialEcology, RuleDecision）
-- 每条格式：`- [记忆标签] 内容摘要`
-- 内容要提炼要点，不要复述对话
-
-### 记忆标签（5类）
-| 标签 | 说明 |
-|------|------|
-| Event | 客观事实、问题、需求、踩坑 |
-| Preference | 用户偏好、习惯、忌讳 |
-| To-do | 待办、承诺、需遵守事项 |
-| Output | 产出物 |
-| Emotion | 只记积极/负面（附加在其他标签上，不单独成条） |
-
-### 事件类型（5维）
-| 类型 | 说明 |
-|------|------|
-| CoreWork | 本职核心业务 |
-| EventsOutside | 临时辅助、无重要成果 |
-| SelfEvolve | 知识/纠错/习惯养成 |
-| SocialEcology | 用户关系/组织/环境规律 |
-| RuleDecision | 硬性规则、流程、约束 |
+- 7 个分类都要写
+- 无内容写 `（空）`
+- 内容 = 事实本身，不是摘要
 
 ## Clean Session 规范
 
 ### 文件位置
 - **目录**: `~/.openclaw/agents/{agent_id}/clean_session/`
-- **文件名**: `{MMDD}#L{N}.json`（如 `0427#L1.json`）
+- **文件名**: `{YYYY-MM-DD}.json`（每天一个文件，追加模式）
 
 ### 文件格式
 ```json
@@ -82,11 +89,26 @@ Heartbeat 现在只做：
 1. 检测 session 切换 → 保存旧 session 的 clean_session
 2. 检查积压 session → 保存积压的 clean_session
 3. 处理当前 session → 清洗消息 → 保存 clean_session
+4. 凌晨 03:00-04:00 检查是否需要提醒总结前一日
 
 **不再做**：
 - ❌ 不调用 LLM API 蒸馏
 - ❌ 不自动写入 L1
 - ❌ 不触发 L3 Auto-Dream
+
+## 凌晨总结提醒
+
+触发条件：
+- 当前时间在 03:00-04:00 之间
+- 前一日有 clean_session 文件
+- 前一日没有 L1 文件（或 L1 为空）
+
+提醒内容：
+```
+📅 凌晨总结提醒 (2026-04-26)
+检测到昨日有 clean_session 文件，但 L1 日志尚未写入。
+建议读取 clean_session 并总结写入 L1。
+```
 
 ## L2 层（保持不变）
 

@@ -1,8 +1,7 @@
 # Memory Automation (Mauto) - Skill 操作指南（简化版）
 
-> 本 Skill 实现 L0→L1 的记忆保存架构
+> 本 Skill 实现 L0→L1→L2 的记忆流转
 > L3 auto-dream 已移除，L1 由 Agent 主动总结生成
-> L2 保持不变（corrections/patterns/insights）
 
 ---
 
@@ -13,16 +12,7 @@
 from memory.l1_reader import L1Reader
 
 l1_reader = L1Reader(agent_id, config)
-
-recent_tags = set()
-for i in range(3):
-    date_str = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-    l1_data = l1_reader.load_index_only(date_str)
-    if l1_data and l1_data.index:
-        for entry in l1_data.index:
-            tag = entry.get("tag", "")
-            if tag:
-                recent_tags.add(tag)
+recent_l1 = l1_reader.load_recent(days=3)
 ```
 
 ---
@@ -35,10 +25,13 @@ Mauto Heartbeat 现在只做一件事：**保存 clean_session**
 Step 1: Session Switch (无条件)
   └─ 检测 session_key 变化 → 保存旧 session 的 clean_session
 
-Step 2: Backlog Processing (无条件)
+Step 2: 积压处理 (无条件)
   └─ 检查积压的历史 session → 每心跳处理 1 个积压
 
-Step 3: Active Session (条件: 不在静默时段)
+Step 3: 凌晨总结提醒 (03:00-04:00)
+  └─ 检查前一日 clean_session 是否已写入 L1 → 未写则提醒
+
+Step 4: Active Session (条件: 不在静默时段)
   └─ 处理当前 session 的新消息 → 清洗 → 保存 clean_session
 ```
 
@@ -58,72 +51,85 @@ Agent **应当**在以下时机主动总结并写入 L1：
 - 用户说"总结一下今天"
 - 用户说"记一下"
 - Agent 认为有重要内容需要记录时
+- **每天凌晨 03:00-04:00 收到 heartbeat 提醒时**
 
 ### 3.2 读取 clean_session
 
 ```python
-# 读取当日 clean_session
-clean_dir = Path(f"~/.openclaw/agents/{agent_id}/clean_session").expanduser()
-clean_files = sorted(clean_dir.glob("*.json"))
+import json
+from pathlib import Path
 
-for f in clean_files:
-    data = json.loads(f.read_text())
-    # data 格式: [{"r": "u/a", "s": sender, "t": timestamp, "c": content}, ...]
+# 读取当日 clean_session
+clean_path = Path(f"~/.openclaw/agents/{agent_id}/clean_session/2026-04-27.json")
+if clean_path.exists():
+    with open(clean_path, 'r') as f:
+        messages = json.load(f)
 ```
 
-### 3.3 写入 L1（新格式）
+### 3.3 L1 新格式
+
+```markdown
+# Memory Log - 2026-04-27
+
+## 索引
+| CoreWork | Mauto简化 |
+|----------|----------|
+| SocialEcology | 偏好简洁 |
+| To-do | 凌晨提醒 |
+| Output | L1新格式 |
+
+---
+
+## CoreWork
+用户要求简化 Mauto：去除 L3 auto-dream，L1 改为 agent 主动提炼
+
+## EventsOutside
+（空）
+
+## SocialEcology
+用户偏好简洁日志格式
+
+## SelfEvolve
+（空）
+
+## RuleDecision
+（空）
+
+## To-do
+每天凌晨 03:00-04:00 提醒总结前一日 clean_session
+
+## Output
+实现了新的 L1 格式：7 分类，索引 8 字摘要
+```
+
+### 3.4 格式规则
+
+| 项目 | 说明 |
+|------|------|
+| **7 分类** | CoreWork / EventsOutside / SocialEcology / SelfEvolve / RuleDecision / To-do / Output |
+| **正文** | 每个分类一行，无内容写 `（空）` |
+| **索引** | 只出现有内容的分类，8 字以内摘要 |
+| **内容** | 事实本身，不是摘要 |
+
+### 3.5 写入 L1
 
 ```python
 from memory.l1_writer import L1Writer
 
 writer = L1Writer(agent_id, config)
 
-entries = [
-    {
-        "tag": "To-do",           # Event|Preference|To-do|Output|Emotion
-        "event_type": "CoreWork",  # CoreWork|EventsOutside|SelfEvolve|SocialEcology|RuleDecision
-        "content": "用户要求简化 Mauto，去除 L3 auto-dream"
-    },
-    {
-        "tag": "Preference",
-        "event_type": "SocialEcology",
-        "content": "用户偏好简洁日志格式"
-    }
-]
+entries = {
+    "CoreWork": "用户要求简化 Mauto：去除 L3 auto-dream，L1 改为 agent 主动提炼",
+    "EventsOutside": None,  # 无内容
+    "SocialEcology": "用户偏好简洁日志格式",
+    "SelfEvolve": None,
+    "RuleDecision": None,
+    "To-do": "每天凌晨 03:00-04:00 提醒总结前一日 clean_session",
+    "Output": "实现了新的 L1 格式：7 分类，索引 8 字摘要"
+}
 
 writer.write(entries, "2026-04-27")
 ```
-
-### 3.4 L1 新格式示例
-
-```markdown
-# Memory Log - 2026-04-27
-
-| 记忆标签 | 事件类型 |
-|----------|----------|
-| To-do | CoreWork |
-| Preference | SocialEcology |
-
----
-
-## CoreWork
-- [To-do] 用户要求简化 Mauto：去除 L3 auto-dream，L1 改为 agent 主动提炼
-- [Event] 发现 L3Consolidator 有 8 步流程，太重
-
-## SocialEcology
-- [Preference] 用户偏好简洁日志格式，索引只保留记忆标签和事件类型
-```
-
-### 3.5 格式规则
-
-**索引表**：
-- 只保留「记忆标签」和「事件类型」两列
-- 去重：同一标签+事件类型组合只出现一次
-
-**正文**：
-- 按 `## 事件类型` 分组
-- 每条格式：`- [记忆标签] 内容摘要`
-- 内容简洁，不要复述对话，要提炼要点
 
 ---
 
@@ -139,26 +145,29 @@ writer.write(entries, "2026-04-27")
 │           ├── patterns.md
 │           └── insights.md
 └── clean_session/                   # Heartbeat 自动保存的清洗后消息
-    └── {MMDD}#L{N}.json
+    └── {YYYY-MM-DD}.json            # 每天一个文件，追加模式
 ```
 
 ---
 
-## 5. 记忆类型系统 (5+5)
+## 5. clean_session 规范
 
-### 5 类记忆标签
-- `Event` - 客观事实、问题、需求（包括踩坑）
-- `Preference` - 用户偏好、习惯、忌讳
-- `To-do` - 待办、承诺、需遵守事项
-- `Output` - 产出物
-- `Emotion` - 只记积极/负面（附加在其他标签上，不单独成条）
+### 文件位置
+- **目录**: `~/.openclaw/agents/{agent_id}/clean_session/`
+- **文件名**: `{YYYY-MM-DD}.json`（每天一个文件，追加模式）
 
-### 5 维事件类型
-- `CoreWork` - 本职核心业务
-- `EventsOutside` - 临时辅助、无重要成果
-- `SelfEvolve` - 知识/纠错/习惯养成
-- `SocialEcology` - 用户关系/组织/环境规律
-- `RuleDecision` - 硬性规则、流程、约束
+### 文件格式
+```json
+[
+  {"r": "u", "s": "ou_xxx", "t": "2026-04-27T14:30:00+08:00", "c": "消息内容"},
+  {"r": "a", "s": "", "t": "2026-04-27T14:31:00+08:00", "c": "助手回复内容"}
+]
+```
+
+- `r`: 角色 (`u`=user, `a`=assistant)
+- `s`: 发送者 ID
+- `t`: 时间戳
+- `c`: 清洗后的内容（已截断至 500 字符）
 
 ---
 
@@ -203,10 +212,14 @@ python -m memory.automation l2 status --agent {agent_id}
     "process_inactive": true,
     "max_age_days": 3,
     "min_message_count": 50
+  },
+  "l2": {
+    "enabled": true
   }
 }
 ```
 
 **已移除的配置**：
 - ❌ `llm` - 不再需要 LLM API
-- ❌ `l3_consolidation` - L3 Auto-Dream 已删除
+- ❌ `distillation` - 不再需要蒸馏
+- ❌ `agent_self_distill` - 不再需要
