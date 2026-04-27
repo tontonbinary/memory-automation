@@ -108,7 +108,7 @@ if clean_path.exists():
 |------|------|
 | **7 分类** | CoreWork / EventsOutside / SocialEcology / SelfEvolve / RuleDecision / To-do / Output |
 | **正文** | 每个分类一行，无内容写 `（空）` |
-| **索引** | 只出现有内容的分类，8 字以内摘要 |
+| **索引** | 只出现有内容的分类；每分类一行；多条内容的前 8 字用 `/` 连接 |
 | **内容** | 事实本身，不是摘要 |
 
 ### 3.5 写入 L1
