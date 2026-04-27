@@ -34,7 +34,7 @@ class SessionManager:
                 "last_session_key": None,
                 "last_processed_time": None,
                 "last_processed_msg_id": None,
-                "last_distilled_messages": 0,
+                "last_saved_messages": 0,
                 "version": "2.0.0"
             }
         try:
@@ -45,7 +45,7 @@ class SessionManager:
                         "last_session_key": None,
                         "last_processed_time": None,
                         "last_processed_msg_id": None,
-                        "last_distilled_messages": 0,
+                        "last_saved_messages": 0,
                         "version": "2.0.0"
                     }
                 return json.loads(content)
@@ -54,7 +54,7 @@ class SessionManager:
                 "last_session_key": None,
                 "last_processed_time": None,
                 "last_processed_msg_id": None,
-                "last_distilled_messages": 0,
+                "last_saved_messages": 0,
                 "version": "2.0.0"
             }
 
@@ -86,7 +86,7 @@ class SessionManager:
             "last_session_key": session_key,
             "last_processed_time": datetime.now().isoformat(),
             "last_processed_msg_id": last_msg_id,
-            "last_distilled_messages": message_count
+            "last_saved_messages": message_count
         })
         return self._save_state(state)
 

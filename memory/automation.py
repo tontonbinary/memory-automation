@@ -61,7 +61,7 @@ class MemoryAutomation:
 
         # 初始化消息清洗器
         self.cleaner = SessionCleaner(
-            min_message_length=self.config.get("distillation", {}).get("min_message_length", 10)
+            min_message_length=self.config.get("min_message_length", 10)
         )
 
         self.message_processor = MessageProcessor(
@@ -304,20 +304,6 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         """
         return self.pattern_detector.detect_pattern_realtime(user_message)
 
-    # === 委托给 distiller ===
-
-    def distill_by_agent(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Agent 自己处理蒸馏 - 无需 LLM API
-
-        Args:
-            messages: 消息列表
-
-        Returns:
-            蒸馏后的记忆项列表
-        """
-        return self.distiller.distill(messages)
-
     def _generate_summary(self, saved_count: int, paths: List[Path]) -> str:
         """
         生成处理完成的摘要信息（简化版）
@@ -361,8 +347,8 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         result = {
             "triggered": False,
             "reason": "",
-            "items_distilled": 0,
-            "lines_written": 0,
+            "saved_count": 0,
+            "saved_paths": [],
             "pattern_detected": None,
             "session_key": session_file
         }
@@ -527,8 +513,8 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
             result = {
                 "triggered": False,
                 "reason": f"agent_id 未指定，请在调用时加 --agent 参数（例如 --agent {detected or 'your_agent_id'}）",
-                "items_distilled": 0,
-                "lines_written": 0,
+                "saved_count": 0,
+                "saved_paths": [],
                 "error": "agent_id_required"
             }
             print(f"[MemoryAutomation] 错误: agent_id 未指定")
@@ -538,12 +524,12 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         result = {
             "triggered": False,
             "reason": "",
-            "items_distilled": 0,
-            "lines_written": 0,
+            "saved_count": 0,
+            "saved_paths": [],
             "pattern_detected": None  # 实时模式检测结果
         }
 
-        # 配置检查（自动提取 API key）
+        # 配置检查
         config_status = self._check_config_status()
         if not config_status["ready"]:
             result["status"] = "api_key_required"
@@ -568,17 +554,12 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                 result["pattern_detected"] = pattern_result
                 # 模式检测不阻断正常触发，继续执行
 
-        # 检查关键词触发（如果有 session_file 参数则跳过关键词检查）
-        if session_file:
-            # 直接处理指定的 session 文件
-            return self._process_session_file(session_file)
-
         if user_message and not self.check_manual_trigger(user_message):
             result["reason"] = "未匹配触发关键词"
             return result
 
         # ===== Session 切换处理 =====
-        # 检查是否需要先处理旧 session 的未蒸馏消息
+        # 检查是否需要先处理旧 session 的未保存消息
         current_session_key, _, _ = self.get_current_session()
         if current_session_key:
             last_state = self.session_manager._load_state()
@@ -587,18 +568,18 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
             if old_session_key and old_session_key != current_session_key:
                 print(f"[MemoryAutomation] [Manual] 检测到 session 切换: {old_session_key} -> {current_session_key}")
-                print(f"[MemoryAutomation] [Manual] 先处理旧 session 的未蒸馏消息...")
+                print(f"[MemoryAutomation] [Manual] 先处理旧 session 的未保存消息...")
 
-                old_items_count, old_items = self.process_old_session(
+                old_saved_count, old_paths = self.process_old_session(
                     old_session_key, old_last_msg_id
                 )
 
                 result["old_session_processed"] = True
-                result["old_session_items"] = old_items_count
+                result["old_session_saved"] = old_saved_count
                 
                 # 生成并打印旧 session 摘要
-                if old_items:
-                    old_summary = self._generate_summary(old_items, old_items_count * 7)  # 估算行数
+                if old_paths:
+                    old_summary = self._generate_summary(old_saved_count, old_paths)
                     print("\n【旧 Session 处理结果】")
                     print(old_summary)
         # ===== Session 切换处理结束 =====
@@ -619,35 +600,31 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         # 读取后立即标记（保存进度）
         self.session_manager.update_last(session_key, last_msg_id, len(messages))
 
-        # message_processor 内部处理：切块→保存→蒸馏→写入
-        # 不再手动分块循环
-        lines_written, items, final_msg_id = self.message_processor.process_session(messages, force=True)
+        # 保存 clean_session
+        saved_count, paths = self.message_processor.process_session(messages, force=True)
 
         # 检查处理结果
-        if lines_written == 0 and len(items) == 0:
-            # 可能是 LLM 失败或无内容
+        if saved_count == 0:
             result.update({
                 "triggered": False,
-                "reason": "蒸馏未产生结果（LLM 失败或无有效内容）",
-                "items_distilled": 0,
-                "lines_written": 0,
-                "session_key": session_key,
-                "needs_attention": True
+                "reason": "clean_session 保存完成（无有效消息）",
+                "saved_count": 0,
+                "saved_paths": [],
+                "session_key": session_key
             })
         else:
             result.update({
                 "triggered": True,
-                "reason": "手动触发成功",
-                "items_distilled": len(items),
-                "lines_written": lines_written,
+                "reason": "clean_session 保存完成",
+                "saved_count": saved_count,
+                "saved_paths": [str(p) for p in paths],
                 "session_key": session_key
             })
             
             # 生成并打印摘要
-            if items:
-                summary = self._generate_summary(items, lines_written)
-                result["summary"] = summary
-                print(summary)
+            summary = self._generate_summary(saved_count, paths)
+            result["summary"] = summary
+            print(summary)
 
         return result
 
@@ -983,16 +960,16 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
                     tracker.mark_processed(
                         session_key, 
                         file_path,
-                        process_result.get("items_distilled", 0),
-                        process_result.get("lines_written", 0)
+                        process_result.get("saved_count", 0),
+                        process_result.get("saved_count", 0)
                     )
                     result["processed"].append({
                         "file": str(file_path),
-                        "items": process_result.get("items_distilled", 0),
-                        "lines": process_result.get("lines_written", 0)
+                        "saved_count": process_result.get("saved_count", 0),
+                        "saved_paths": process_result.get("paths", [])
                     })
                     processed_count += 1
-                    print(f"[MemoryAutomation] [Backlog] ✓ 完成: {process_result.get('items_distilled', 0)} 项记忆")
+                    print(f"[MemoryAutomation] [Backlog] ✓ 完成: {process_result.get('saved_count', 0)} 个文件")
                 else:
                     error_msg = process_result.get("reason", "未知错误")
                     tracker.mark_skipped(session_key, file_path, f"处理失败: {error_msg}")
@@ -1217,8 +1194,10 @@ def main():
             print(f"[错误] 请在调用时添加 --agent 参数")
             sys.exit(1)
         if result['triggered']:
-            print(f"  - 蒸馏项: {result['items_distilled']}")
-            print(f"  - 写入行: {result['lines_written']}")
+            print(f"  - 保存文件: {result['saved_count']}")
+            if result.get('saved_paths'):
+                for p in result['saved_paths']:
+                    print(f"    📁 {p}")
             if result.get('session_key'):
                 print(f"  - Session: {result['session_key']}")
 
@@ -1232,7 +1211,7 @@ def main():
         old_session_key = sys.argv[2]
         print(f"[MemoryAutomation] 处理旧 session: {old_session_key}")
         result = automation.process_old_session(old_session_key)
-        print(f"\n[结果] 蒸馏项: {result[0]}, items: {len(result[1]) if result[1] else 0}")
+        print(f"\n[结果] 保存文件数: {result[0]}, paths: {result[1]}")
 
     elif mode == "heartbeat":
         # Heartbeat 模式 - 只读取新消息，写入队列，不蒸馏
@@ -1242,9 +1221,8 @@ def main():
         if result.get('activation_needed'):
             print(f"\n[MemoryAutomation] {result['reason']}")
             print(f"[MemoryAutomation] 请在 HEARTBEAT.md 中添加 --agent 参数")
-        elif result['triggered'] and result['pending_count'] > 0:
-            print(f"\n[MemoryAutomation] 发现 {result['pending_count']} 条新消息待蒸馏")
-            print(f"请检查 memory/pending_queue.json 并进行 LLM 蒸馏")
+        elif result['triggered'] and result.get('saved_count', 0) > 0:
+            print(f"\n[MemoryAutomation] 保存 {result['saved_count']} 个 clean_session 文件")
         else:
             print(f"\n[结果] {result['reason']}")
     
@@ -1278,7 +1256,7 @@ def main():
         if result.get("processed"):
             print("已处理文件:")
             for item in result["processed"]:
-                print(f"  ✓ {item['file']} ({item['items']} 项记忆)")
+                print(f"  ✓ {item['file']} ({item['saved_count']} 个文件)")
     
     else:
         print(f"错误: 未知模式 '{mode}'")

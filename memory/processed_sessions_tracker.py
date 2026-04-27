@@ -63,13 +63,13 @@ class ProcessedSessionsTracker:
             return False
     
     def mark_processed(self, session_key: str, session_file: Path, 
-                       msg_count: int, distilled_items: int) -> bool:
+                       msg_count: int, saved_count: int) -> bool:
         """标记 session 为已处理"""
         self.data["processed"][session_key] = {
             "file": str(session_file),
             "processed_time": datetime.now().isoformat(),
             "msg_count": msg_count,
-            "distilled_items": distilled_items
+            "saved_count": saved_count
         }
         
         # 如果之前在 skipped 中，移除

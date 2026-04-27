@@ -71,119 +71,24 @@ class ReferenceManager:
     
     def get_config_status(self) -> Dict[str, bool]:
         """
-        获取配置状态
-        
-        自动检查多个来源：
-        1. 环境变量
-        2. config.json
-        3. OpenClaw 默认配置
+        获取配置状态（简化版 - 无需 API key）
         
         Returns:
-            {"api_key": bool, "agent_types": bool, "api_key_source": str}
+            {"ready": bool, "message": str}
         """
-        import os
-        state = self._load_state()
-        
-        api_key = None
-        api_key_source = None
-        
-        # 1. 检查环境变量
-        env_key = os.environ.get("MINIMAX_API_KEY") or os.environ.get("MINIMAX_API_TOKEN")
-        if env_key:
-            api_key = env_key
-            api_key_source = "environment"
-        
-        # 2. 检查 config.json（优先级：config.local.json > config.json）
-        if not api_key:
-            skill_dir = Path("~/.openclaw/skills/memory-automation").expanduser()
-            
-            # 优先检查 config.local.json（本地配置，不提交到 Git）
-            local_config_path = skill_dir / "config.local.json"
-            if local_config_path.exists():
-                try:
-                    with open(local_config_path) as f:
-                        config = json.load(f)
-                        cfg_key = config.get("llm", {}).get("api_key", "")
-                        if cfg_key and not cfg_key.startswith("YOUR_"):
-                            api_key = cfg_key
-                            api_key_source = "config.local.json"
-                except:
-                    pass
-            
-            # 然后检查 config.json（模板配置）
-            if not api_key:
-                config_path = skill_dir / "config.json"
-                if config_path.exists():
-                    try:
-                        with open(config_path) as f:
-                            config = json.load(f)
-                            cfg_key = config.get("llm", {}).get("api_key", "")
-                            if cfg_key and not cfg_key.startswith("YOUR_"):
-                                api_key = cfg_key
-                                api_key_source = "config.json"
-                    except:
-                        pass
-        
-        # 3. 尝试从 OpenClaw 配置提取
-        if not api_key:
-            api_key = self._try_extract_openclaw_api_key()
-            if api_key:
-                api_key_source = "openclaw_default"
-        
-        # agent_type: 从 heartbeat-state.json 读
-        agent_types = bool(state.get("agent_types"))
-        
         return {
-            "api_key": bool(api_key),
-            "api_key_value": api_key,  # 实际 key 值（可选）
-            "api_key_source": api_key_source,
-            "agent_types": agent_types
+            "ready": True,
+            "message": "配置就绪"
         }
-    
-    def _try_extract_openclaw_api_key(self) -> Optional[str]:
-        """尝试从 OpenClaw 配置提取 API key"""
-        try:
-            home = Path.home()
-            # 只使用当前 agent_id，禁止硬编码其他 agent 名称
-            auth_file = home / ".openclaw" / "agents" / self.agent_id / "agent" / "auth-profiles.json"
-            if auth_file.exists():
-                with open(auth_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                profiles = data.get("profiles", {})
-                for profile_name, profile in profiles.items():
-                    if "minimax" in profile_name.lower():
-                        token = profile.get("access") or profile.get("key")
-                        if token:
-                            return token
-                    
-                    # 尝试任何可用 key
-                    for profile in profiles.values():
-                        token = profile.get("access") or profile.get("key")
-                        if token and len(token) > 20:
-                            return token
-        except:
-            pass
-        
-        return None
     
     def is_complete(self) -> Tuple[bool, List[str]]:
         """
-        检查配置是否完整
-        
-        现在 API key 可以自动提取，通常不需要用户手动配置
+        检查配置是否完整（简化版）
         
         Returns:
             (是否完整, 缺失项列表, 状态详情)
         """
-        status = self.get_config_status()
-        missing = []
-        
-        if not status["api_key"]:
-            missing.append("api_key")
-        # agent_types 不再作为必需项
-        
-        return len(missing) == 0, missing, status
+        return True, [], {"ready": True}
     
     def get_agent_type(self) -> Optional[str]:
         """获取 agent 类型"""
