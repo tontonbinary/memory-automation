@@ -79,14 +79,13 @@ class L1Writer:
                 seen.add(key)
                 existing_by_category[cat].append(content)
 
-        # 构建索引：有内容的分类
+        # 构建索引：每个条目都单独一行
         index_items = []
         for cat in self.CATEGORIES:
             if existing_by_category[cat]:
-                # 索引摘要：取第一个条目的前 8 字
-                first_content = existing_by_category[cat][0]
-                summary = first_content[:8]
-                index_items.append((cat, summary))
+                for content in existing_by_category[cat]:
+                    summary = content[:8]
+                    index_items.append((cat, summary))
 
         # 写入文件
         lines_written = 0
