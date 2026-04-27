@@ -118,13 +118,13 @@ from memory.l1_writer import L1Writer
 
 writer = L1Writer(agent_id, config)
 
-# 格式：List[Dict]，每项包含 tag、event_type、content
+# 格式：List[Dict]，每项只需 event_type 和 content
 # 同分类可以有多条（每条单独一行索引）
 entries = [
-    {'tag': 'Event', 'event_type': 'CoreWork', 'content': '用户要求简化 Mauto：去除 L3 auto-dream'},
-    {'tag': 'Preference', 'event_type': 'SocialEcology', 'content': '用户偏好简洁日志格式'},
-    {'tag': 'To-do', 'event_type': 'To-do', 'content': '每天凌晨 03:00-04:00 提醒总结前一日 clean_session'},
-    {'tag': 'To-do', 'event_type': 'To-do', 'content': '另一个待办事项'},
+    {'event_type': 'CoreWork', 'content': '用户要求简化 Mauto：去除 L3 auto-dream'},
+    {'event_type': 'SocialEcology', 'content': '用户偏好简洁日志格式'},
+    {'event_type': 'To-do', 'content': '每天凌晨 03:00-04:00 提醒总结前一日 clean_session'},
+    {'event_type': 'To-do', 'content': '另一个待办事项'},
 ]
 
 writer.write(entries, "2026-04-27")
