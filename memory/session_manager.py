@@ -131,115 +131,86 @@ class SessionManager:
 
     def get_current_session(self) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
         """
-        获取当前会话信息，只返回上次处理后新增的消息
+        获取当前会话信息（扫描 sessions 目录，不依赖 openclaw sessions 命令）
+
+        逻辑：
+        1. 优先使用状态文件记录的 last_session_key 对应的文件
+        2. 否则找到 sessions 目录下最近修改的 .jsonl 文件
 
         Returns:
             (session_key, messages, last_msg_id)
         """
-        try:
-            # 使用 openclaw CLI 获取当前会话
-            result = subprocess.run(
-                ["openclaw", "sessions", "--agent", self.agent_id, "--json"],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+        sessions_dir = self._get_sessions_dir()
 
-            if result.returncode != 0:
-                print(f"[SessionManager] 获取会话失败: {result.stderr}")
-                return "", [], None
+        if not sessions_dir.exists():
+            print(f"[SessionManager] Sessions 目录不存在: {sessions_dir}")
+            return "", [], None
 
-            data = json.loads(result.stdout)
-            sessions = data.get("sessions", [])
+        # 获取所有 session 文件（包括 reset 的）
+        session_files = []
+        for f in sessions_dir.iterdir():
+            if f.is_file() and (f.suffix == '.jsonl' or '.jsonl.' in f.name):
+                session_files.append(f)
 
-            if not sessions:
-                return "", [], None
+        if not session_files:
+            print(f"[SessionManager] Sessions 目录为空: {sessions_dir}")
+            return "", [], None
 
-            # 获取最新会话
-            latest = sessions[0]
-            session_key = latest.get("key", "")
-            session_id = latest.get("sessionId", "")
+        # 优先用状态文件记录的 session
+        state = self._load_state()
+        last_session_key = state.get("last_session_key")
 
-            # 直接读取 session JSONL 文件
-            session_file = Path(f"~/.openclaw/agents/{self.agent_id}/sessions/{session_id}.jsonl").expanduser()
+        # 找最近修改的 session 文件
+        # 排序：优先 last_session_key 对应的文件，然后按修改时间
+        def sort_key(f):
+            # 优先 last_session_key 对应的文件
+            is_last = (last_session_key and (
+                f.name == f"{last_session_key}.jsonl" or
+                f.name.startswith(f"{last_session_key}.jsonl.")
+            ))
+            # 按修改时间降序
+            mtime = f.stat().st_mtime
+            return (not is_last, -mtime)
 
-            if not session_file.exists():
-                print(f"[SessionManager] Session file not found: {session_file}")
-                return session_key, [], None
+        session_files.sort(key=sort_key)
+        session_file = session_files[0]
 
-            # 获取上次处理的消息ID
-            last_processed_msg_id = self.get_last_processed_msg_id()
+        # 从文件名构造 session_key（去掉 .jsonl 相关后缀）
+        session_id = session_file.stem.replace('.reset.', '.').replace('.bak', '')
+        session_key = last_session_key or session_id
 
-            # 读取 JSONL 文件解析消息
-            all_messages = []
-            last_msg_id = None
+        print(f"[SessionManager] 使用 session 文件: {session_file.name} (mtime={datetime.fromtimestamp(session_file.stat().st_mtime)})")
 
-            with open(session_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                        if entry.get("type") == "message":
-                            msg_data = entry.get("message", {})
-                            role = msg_data.get("role", "")
+        # 读取消息
+        all_messages, last_msg_id = self._read_messages_from_session_file(session_file)
 
-                            # 跳过工具结果消息（toolResult），它们不是对话内容
-                            if role == "toolResult":
-                                continue
+        if not all_messages:
+            print(f"[SessionManager] Session 文件无消息: {session_file}")
+            return session_key, [], None
 
-                            # 提取消息ID（现在 id 和 parentId 在顶层）
-                            msg_id = entry.get("id", "") or f"msg_{len(all_messages)}"
-                            msg = {
-                                "role": role,
-                                "content": msg_data.get("content", ""),
-                                "id": msg_id,
-                                "parentId": entry.get("parentId", ""),
-                                "timestamp": entry.get("timestamp", "")
-                            }
-                            all_messages.append(msg)
-                            last_msg_id = msg_id
-                    except json.JSONDecodeError:
-                        continue
+        # 过滤已处理的消息
+        last_processed_msg_id = self.get_last_processed_msg_id()
+        if last_processed_msg_id:
+            id_exists = any(msg.get("id") == last_processed_msg_id for msg in all_messages)
 
-            # 如果只想要新消息，过滤掉已处理的消息
-            if last_processed_msg_id:
-                # Fix 2: 验证 last_processed_msg_id 是否真的在当前消息列表里
-                # 如果 session 文件变了（reset/切换），旧 id 找不到会退化为全量处理
-                id_exists = any(msg.get("id") == last_processed_msg_id for msg in all_messages)
-
-                if not id_exists:
-                    # session 文件可能已变，退化为全量处理
-                    print(f"[SessionManager] ⚠️ last_processed_msg_id={last_processed_msg_id} 不在当前 session 文件，全量处理 ({len(all_messages)} 条)")
-                    return session_key, all_messages, last_msg_id
-
-                # 正常过滤：跳过 last_processed_msg_id 之后的消息
-                new_messages = []
-                found_last = False
-                last_msg = None
-                for msg in all_messages:
-                    last_msg = msg
-                    if found_last:
-                        new_messages.append(msg)
-                    elif msg.get("id") == last_processed_msg_id:
-                        found_last = True
-
-                print(f"[SessionManager] ✅ 过滤: last={last_processed_msg_id}, 过滤后={len(new_messages)}/{len(all_messages)} 条")
-                return session_key, new_messages, last_msg_id
-            else:
-                # 首次处理，返回所有消息
+            if not id_exists:
+                print(f"[SessionManager] ⚠️ last_processed_msg_id={last_processed_msg_id} 不在当前 session 文件，全量处理 ({len(all_messages)} 条)")
                 return session_key, all_messages, last_msg_id
 
-        except subprocess.TimeoutExpired:
-            print("[SessionManager] ⚠️ 获取会话超时，请检查网络或 openclaw 服务")
-            return "", [], None  # 保持兼容，但日志已改进
-        except json.JSONDecodeError as e:
-            print(f"[SessionManager] ❌ 解析 JSON 失败: {e}，请检查 session 文件格式")
-            return "", [], None
-        except Exception as e:
-            print(f"[SessionManager] ❌ 获取会话异常: {e}")
-            return "", [], None
+            # 过滤
+            new_messages = []
+            found_last = False
+            for msg in all_messages:
+                if found_last:
+                    new_messages.append(msg)
+                elif msg.get("id") == last_processed_msg_id:
+                    found_last = True
+
+            print(f"[SessionManager] ✅ 过滤: last={last_processed_msg_id}, 过滤后={len(new_messages)}/{len(all_messages)} 条")
+            return session_key, new_messages, last_msg_id
+        else:
+            print(f"[SessionManager] 首次处理，全量返回 ({len(all_messages)} 条)")
+            return session_key, all_messages, last_msg_id
 
     def _get_sessions_dir(self) -> Path:
         """
