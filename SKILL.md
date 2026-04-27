@@ -108,7 +108,8 @@ if clean_path.exists():
 |------|------|
 | **7 分类** | CoreWork / EventsOutside / SocialEcology / SelfEvolve / RuleDecision / To-do / Output |
 | **正文** | 每个分类一行，无内容写 `（空）` |
-| **索引** | 只出现有内容的分类；每分类一行；多条内容的前 8 字用 `/` 连接 |
+| **索引** | 只出现有内容的分类；每分类一行；多条 summary 用 `/` 连接 |
+| **摘要** | Agent 提供，不超过 8 字；脚本直接使用 |
 | **内容** | 事实本身，不是摘要 |
 
 ### 3.5 写入 L1
@@ -118,20 +119,21 @@ from memory.l1_writer import L1Writer
 
 writer = L1Writer(agent_id, config)
 
-# 格式：List[Dict]，每项只需 event_type 和 content
-# 同分类可以有多条（每条单独一行索引）
+# 格式：List[Dict]，每项包含 event_type、content、summary
+# summary 由 Agent 提供，不超过 8 字，脚本直接使用
+# 同分类可以有多条，summary 用 / 连接
 entries = [
-    {'event_type': 'CoreWork', 'content': '用户要求简化 Mauto：去除 L3 auto-dream'},
-    {'event_type': 'SocialEcology', 'content': '用户偏好简洁日志格式'},
-    {'event_type': 'To-do', 'content': '每天凌晨 03:00-04:00 提醒总结前一日 clean_session'},
-    {'event_type': 'To-do', 'content': 'L1 格式需要修正'},
-    {'event_type': 'Output', 'content': '实现了新的 L1 格式'},
+    {'event_type': 'CoreWork', 'content': '用户要求简化 Mauto：去除 L3 auto-dream', 'summary': 'Mauto简化'},
+    {'event_type': 'SocialEcology', 'content': '用户偏好简洁日志格式', 'summary': '偏好简洁'},
+    {'event_type': 'To-do', 'content': '每天凌晨 03:00-04:00 提醒总结前一日 clean_session', 'summary': '凌晨提醒'},
+    {'event_type': 'To-do', 'content': 'L1 格式需要修正', 'summary': 'L1格式修正'},
+    {'event_type': 'Output', 'content': '实现了新的 L1 格式', 'summary': 'L1新格式'},
 ]
 
 writer.write(entries, "2026-04-27")
 ```
 
-**多条目示例**：上面 To-do 有两条内容，索引和正文都会显示两条。
+**多条目示例**：上面 To-do 有两条，索引里 To-do 行为 `凌晨提醒 / L1格式修正`。
 
 ---
 
