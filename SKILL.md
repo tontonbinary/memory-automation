@@ -135,6 +135,28 @@ writer.write(entries, "2026-04-27")
 
 **多条目示例**：上面 To-do 有两条，索引里 To-do 行为 `凌晨提醒 / L1格式修正`。
 
+### 3.6 同一天多个 Session 的 L1 处理
+
+如果同一天有多个 session（如中午 reset 后产生新 session）：
+1. **Reset 前**：先保存当前 session 的 clean_session
+2. **Reset 后马上**：生成带后缀的 L1，如 `2026-04-28_1.md`
+3. **后续 L1 生成**：不带后缀的 `2026-04-28.md` 会自动合并所有同日期的 L1 文件
+
+```python
+# Reset 后马上写入（带后缀）
+writer.write(entries, "2026-04-28", suffix="_1")
+
+# 后续合并（不带后缀，自动合并所有 2026-04-28*.md）
+writer.write(new_entries, "2026-04-28")
+```
+
+**读取时 glob**：
+```python
+from pathlib import Path
+l1_files = Path("memory/").glob("2026-04-28*.md")
+# 会找到 2026-04-28.md, 2026-04-28_1.md, 2026-04-28_2.md 等
+```
+
 ---
 
 ## 4. 文件路径
