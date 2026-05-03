@@ -630,36 +630,38 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
     def _check_daily_summary(self) -> Optional[str]:
         """
-        检查是否需要提醒 Agent 总结前一日的 clean_session
-        
+        检查是否需要蒸馏/提醒前一天的 L1
+
         触发条件：
-        - 当前时间在 03:00-04:00 之间
-        - 前一天有 clean_session 文件
-        - 前一天没有 L1 文件（或 L1 为空）
-        
+        - 凌晨（03:00-04:00）：强制返回日期字符串，触发 l1-distill cron
+        - 中午（12:00-13:00）/ 晚间（21:00-22:00）：有 clean_session 且 L1 未生成才提醒
+
         Returns:
-            提醒消息，或 None（不需要提醒）
+            - 凌晨：日期字符串（触发 cron）
+            - 中/晚间：提醒消息，或 None（不需要提醒）
         """
         from datetime import datetime, timedelta
-        
+
         now = datetime.now()
-        # 检查是否在 03:00-04:00
-        if not (3 <= now.hour < 4):
-            return None
-        
-        # 计算前一天日期
         yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        yesterday_short = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        
-        # 检查前一天 clean_session 是否存在（新的文件名格式：{YYYY-MM-DD}.json）
+
+        # 凌晨窗口：强制触发 cron，不检查任何条件
+        if 3 <= now.hour < 4:
+            return yesterday
+
+        # 中/晚间窗口：保持原有提醒逻辑
+        in_evening_window = (12 <= now.hour < 13) or (21 <= now.hour < 22)
+        if not in_evening_window:
+            return None
+
+        # 检查前一天 clean_session 是否存在
         clean_dir_str = self.config.get("output", {}).get("clean_session_dir",
             f"~/.openclaw/agents/{self.agent_id}/clean_session")
         clean_dir = Path(clean_dir_str).expanduser()
-        
-        yesterday_clean_file = clean_dir / f"{yesterday_short}.json"
+        yesterday_clean_file = clean_dir / f"{yesterday}.json"
         if not yesterday_clean_file.exists():
             return None
-        
+
         # 检查前一天 L1 是否存在且有内容
         l1_path = self.l1_writer._get_l1_path(yesterday)
         l1_exists = l1_path.exists()
@@ -667,32 +669,31 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         if l1_exists:
             try:
                 content = l1_path.read_text(encoding='utf-8')
-                # 检查是否有实际条目（非空文件）
-                l1_has_content = len(content.strip()) > 50  # 简单判断
+                l1_has_content = len(content.strip()) > 50
             except:
                 pass
-        
+
         if l1_exists and l1_has_content:
             return None  # L1 已写，无需提醒
-        
+
         # 构建提醒消息
-        msg = f"""
-📅 凌晨总结提醒 ({yesterday_short})
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-检测到昨日有 clean_session 文件，但 L1 日志尚未写入。
+        window_name = {12: "中午", 21: "晚间"}[now.hour]
+        msg = f"""📅 [{window_name}蒸馏提醒] {yesterday} L1 未生成
+clean_session 已存在：{yesterday_clean_file}
+目标 L1 文件：{l1_path}
 
-建议操作：
-1. 读取 clean_session：{yesterday_clean_file}
-2. 在上下文中总结要点
-3. 写入 L1：memory/{yesterday_short}.md
+请读取 clean_session，提取记忆条目，然后调用 L1Writer.write() 写入。
 
-格式示例：
-  writer.write([
-      {{"tag": "Event", "event_type": "CoreWork", "content": "..."}},
-      {{"tag": "To-do", "event_type": "CoreWork", "content": "..."}},
-  ], "{yesterday_short}")
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+格式要求：
+- 每个条目包含：event_type（分类）、content（内容）
+- 分类用：CoreWork / EventsOutside / SocialEcology / SelfEvolve / RuleDecision / To-do / Output
+- 示例：entries = [{{'event_type': 'CoreWork', 'content': '...'}}, ...]
+- 增量写入，不覆盖已有内容
+- 检查 L1 中已有的条目，避免重复写入相同内容
+
+完成后输出【蒸馏完成】"""
         return msg
+
 
     def _check_session_inactivity(self) -> Optional[str]:
         """
@@ -839,12 +840,17 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         
         print(f"[MemoryAutomation] {config_status['message']}")
 
-        # ===== 第三步：凌晨总结提醒（03:00-04:00）=====
-        summary_reminder = self._check_daily_summary()
-        if summary_reminder:
-            print(summary_reminder)
-            result["summary_reminder"] = True
-            # 继续执行后续步骤，不返回
+        # ===== 第三步：凌晨蒸馏触发 / 中/晚间提醒 =====
+        distill_check = self._check_daily_summary()
+        if distill_check:
+            # 凌晨返回日期字符串：强制触发 l1-distill cron
+            if len(distill_check) == 10 and "-" in distill_check:
+                print(f"[MemoryAutomation] 📅 凌晨强制蒸馏 {distill_check}，l1-distill cron 将自动触发")
+                result["distill_pending"] = distill_check
+            else:
+                # 中/晚间返回提醒消息
+                print(distill_check)
+                result["summary_reminder"] = True
 
         # 获取当前会话（只获取新消息）
         session_key, messages, last_msg_id = self.get_current_session()

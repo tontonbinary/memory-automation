@@ -150,8 +150,11 @@ class SessionCleaner:
             if role == 'user' and content.startswith('Read HEARTBEAT'):
                 continue
             if role == 'assistant':
-                first_line = content.split('\n')[0].strip()
-                if first_line == 'HEARTBEAT_OK':
+                # 过滤包含 HEARTBEAT_OK 的消息（无论位置，这是最主要的噪音源）
+                if 'HEARTBEAT_OK' in content:
+                    continue
+                # 过滤明确的 heartbeat 运行报告（短消息 + 特定关键词组合）
+                if len(content) < 80 and any(kw in content.lower() for kw in ['auto-dream', 'silent period', '蒸馏触发', '静默时段']):
                     continue
 
             # 过滤 System Exec 消息
