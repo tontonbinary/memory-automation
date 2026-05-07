@@ -57,6 +57,20 @@ class SessionCleaner:
         # 去掉空 ```json 块
         content = re.sub(r'```json\s*\{[\s\S]*?\}\s*```', '', content)
 
+        # 去掉时间戳前缀，支持两种格式：
+        #   [Day Mon DD HH:MM GMT+N] — 英文月份
+        #   [Day YYYY-MM-DD HH:MM GMT+N] — 数字日期
+        content = re.sub(r'^\[[A-Z][a-z]+\s+(?:[A-Z][a-z]+\s+\d{1,2}|\d{4}-\d{2}-\d{2})\s+\d{2}:\d{2}\s*(GMT[+-]\d+)?\]\s*', '', content)
+
+        # 去掉 [Subagent Context] 标记
+        content = re.sub(r'\[Subagent Context\]\s*', '', content)
+
+        # 去掉 [assistant turn failed before producing content]
+        content = re.sub(r'\[assistant turn failed before producing content\]', '', content, flags=re.IGNORECASE)
+
+        # 去掉用户 ID 前缀（Feishu ou_xxx: 格式）
+        content = re.sub(r'^(ou_[0-9a-fA-F]+|user_[0-9a-fA-F]+|openid_[^\s]+)\s*:\s*', '', content)
+
         return content.strip()
 
     def _is_user_facing(self, msg: Dict[str, Any], id_map: Dict[str, Dict]) -> bool:
@@ -140,6 +154,15 @@ class SessionCleaner:
             else:
                 content = self._clean_content(str(raw_content))
 
+            # 过滤 [Subagent Context] 系统消息（用清洗前的内容检测）
+            raw = str(msg.get('content', ''))
+            if role == 'user' and ('[Subagent Context]' in raw or 'Subagent Context' in raw):
+                continue
+
+            # 过滤 [assistant turn failed] 消息（用清洗前的内容检测）
+            if 'assistant turn failed' in raw.lower():
+                continue
+
             content = content.strip()
 
             # 跳过短消息
@@ -214,6 +237,6 @@ class SessionCleaner:
                 'r': role_short,
                 's': msg.get('sender', ''),
                 't': str(msg.get('timestamp', '')),
-                'c': msg.get('content', '')[:500]  # 截断避免过大
+                'c': msg.get('content', '')  # 完整内容，不截断
             })
         return result

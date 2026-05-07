@@ -25,7 +25,8 @@ from .l1_writer import L1Writer
 from .l1_reader import L1Reader, L1Data
 from .reference_manager import ReferenceManager
 from .processed_sessions_tracker import ProcessedSessionsTracker
-from .l2_checker import L2Checker
+from .file_logger import FileLogger
+from .setup_checker import run_setup
 
 
 class MemoryAutomation:
@@ -74,6 +75,9 @@ class MemoryAutomation:
             agent_id=self.agent_id,
             config=self.config
         )
+
+        # 初始化文件日志器
+        self.logger = FileLogger(agent_id=self.agent_id)
 
         # 确保 L1 目录存在
         self._ensure_l1_directory()
@@ -449,6 +453,52 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         """格式化为 L1 存储格式"""
         return self.l1_writer._format_l1_entry(item, line_number)
 
+    def _auto_check_setup(self, result: Dict) -> None:
+        """
+        配置自检 — heartbeat 末尾自动检查 cron 是否就绪
+
+        每天检查一次，未就绪则输出提醒。agent 看到提醒后可自行创建 cron job。
+        不修改系统配置，只检查+输出。
+        """
+        if not self.agent_id:
+            return
+
+        from datetime import datetime
+
+        # 读取 state，看今天是否已检查过
+        state = self.session_manager._load_state()
+        last_check = state.get("last_setup_check", "")
+        today = datetime.now().strftime("%Y-%m-%d")
+        if last_check == today:
+            return
+
+        # 执行 cron 检查
+        from .setup_checker import SetupChecker
+        checker = SetupChecker(self.agent_id)
+        cron_result = checker.check_cron_job()
+
+        if cron_result["status"] == "pass":
+            state["last_setup_check"] = today
+            self.session_manager._save_state(state)
+            return
+
+        # cron 未配置 → 输出提醒给 agent
+        print("\n" + "!" * 50)
+        print(f"⚠️ [Mauto 配置自检] agent '{self.agent_id}' 缺少凌晨蒸馏 cron job")
+        print(f"   如需凌晨 L1 蒸馏，请在 3:00-4:00 时间段内选一个分钟级创建 cron job：")
+        print(f"   openclaw cron add --name {self.agent_id}-l1-distill \\")
+        print(f"       --cron '分 时 * * *' \\")
+        print(f"       --agent {self.agent_id} \\")
+        print(f"       --session isolated \\")
+        print(f"       --light-context \\")
+        print(f"       --message '现在是凌晨，请检查前一天的clean_session是否已写入L1。'")
+        print(f"   示例：--cron '0 3 * * *' = 每天 3:00，--cron '30 3 * * *' = 每天 3:30")
+        print("!" * 50 + "\n")
+
+        result["setup_reminder"] = True
+        state["last_setup_check"] = today
+        self.session_manager._save_state(state)
+
     def _write_pending_queue(self, messages: List[Dict[str, Any]]) -> Path:
         """将新消息写入待处理队列文件"""
         return self.l1_writer.write_pending_queue(messages)
@@ -630,29 +680,20 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
 
     def _check_daily_summary(self) -> Optional[str]:
         """
-        检查是否需要蒸馏/提醒前一天的 L1
+        检查前一日 L1 是否需要补写（安全网）
 
-        触发条件：
-        - 凌晨（03:00-04:00）：强制返回日期字符串，触发 l1-distill cron
-        - 中午（12:00-13:00）/ 晚间（21:00-22:00）：有 clean_session 且 L1 未生成才提醒
+        次日后任意时间运行，检查规则：
+        - 昨天 clean_session 缺失 → 无对话，跳过
+        - 昨天 L1 已存在 → 已蒸馏，跳过
+        - 有 clean_session + 缺 L1 → 返回提醒消息
 
         Returns:
-            - 凌晨：日期字符串（触发 cron）
-            - 中/晚间：提醒消息，或 None（不需要提醒）
+            提醒消息，或 None（不需要提醒）
         """
         from datetime import datetime, timedelta
 
         now = datetime.now()
         yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-
-        # 凌晨窗口：强制触发 cron，不检查任何条件
-        if 3 <= now.hour < 4:
-            return yesterday
-
-        # 中/晚间窗口：保持原有提醒逻辑
-        in_evening_window = (12 <= now.hour < 13) or (21 <= now.hour < 22)
-        if not in_evening_window:
-            return None
 
         # 检查前一天 clean_session 是否存在
         clean_dir_str = self.config.get("output", {}).get("clean_session_dir",
@@ -660,25 +701,20 @@ cd ~/.openclaw/skills/memory-automation && python3 -m memory.automation heartbea
         clean_dir = Path(clean_dir_str).expanduser()
         yesterday_clean_file = clean_dir / f"{yesterday}.json"
         if not yesterday_clean_file.exists():
-            return None
+            return None  # 昨天没对话，静默跳过
 
         # 检查前一天 L1 是否存在且有内容
         l1_path = self.l1_writer._get_l1_path(yesterday)
-        l1_exists = l1_path.exists()
-        l1_has_content = False
-        if l1_exists:
+        if l1_path.exists():
             try:
                 content = l1_path.read_text(encoding='utf-8')
-                l1_has_content = len(content.strip()) > 50
+                if len(content.strip()) > 50:
+                    return None  # L1 已写，跳过
             except:
                 pass
 
-        if l1_exists and l1_has_content:
-            return None  # L1 已写，无需提醒
-
-        # 构建提醒消息
-        window_name = {12: "中午", 21: "晚间"}[now.hour]
-        msg = f"""📅 [{window_name}蒸馏提醒] {yesterday} L1 未生成
+        # 有 clean_session 但缺 L1 → 提醒 agent 补写
+        msg = f"""📅 [次日蒸馏提醒] {yesterday} L1 未生成
 clean_session 已存在：{yesterday_clean_file}
 目标 L1 文件：{l1_path}
 
@@ -689,7 +725,6 @@ clean_session 已存在：{yesterday_clean_file}
 - 分类用：CoreWork / EventsOutside / SocialEcology / SelfEvolve / RuleDecision / To-do / Output
 - 示例：entries = [{{'event_type': 'CoreWork', 'content': '...'}}, ...]
 - 增量写入，不覆盖已有内容
-- 检查 L1 中已有的条目，避免重复写入相同内容
 
 完成后输出【蒸馏完成】"""
         return msg
@@ -840,17 +875,8 @@ clean_session 已存在：{yesterday_clean_file}
         
         print(f"[MemoryAutomation] {config_status['message']}")
 
-        # ===== 第三步：凌晨蒸馏触发 / 中/晚间提醒 =====
-        distill_check = self._check_daily_summary()
-        if distill_check:
-            # 凌晨返回日期字符串：强制触发 l1-distill cron
-            if len(distill_check) == 10 and "-" in distill_check:
-                print(f"[MemoryAutomation] 📅 凌晨强制蒸馏 {distill_check}，l1-distill cron 将自动触发")
-                result["distill_pending"] = distill_check
-            else:
-                # 中/晚间返回提醒消息
-                print(distill_check)
-                result["summary_reminder"] = True
+        # ===== 第零步贰：配置自检（每天一次，独立于 session 处理）=====
+        self._auto_check_setup(result)
 
         # 获取当前会话（只获取新消息）
         session_key, messages, last_msg_id = self.get_current_session()
@@ -1110,6 +1136,136 @@ clean_session 已存在：{yesterday_clean_file}
         return self.run_process_backlog(max_sessions=1, force=False)
 
 
+def _handle_distill_l1(automation: MemoryAutomation, date_str: Optional[str] = None) -> Dict:
+    """
+    distill-l1 命令：输出昨日 clean_session 的结构化内容供 agent 写 L1
+
+    流程：
+    1. 默认昨天，支持 --date 指定
+    2. 检查 clean_session 是否存在 → 缺则静默退出
+    3. 检查 L1 是否已写 → 已写则跳过
+    4. 输出 clean_session 内容 + 分类模板
+    """
+    from datetime import datetime, timedelta
+
+    if not date_str:
+        date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    agent_id = automation.agent_id
+
+    # 检查 clean_session 是否存在
+    clean_dir_str = automation.config.get("output", {}).get("clean_session_dir",
+        f"~/.openclaw/agents/{agent_id}/clean_session")
+    clean_dir = Path(clean_dir_str).expanduser()
+    clean_file = clean_dir / f"{date_str}.json"
+
+    if not clean_file.exists():
+        print(f"[distill-l1] {date_str} clean_session 不存在（当天无对话），跳过")
+        return {"status": "skipped", "reason": "no_clean_session", "date": date_str}
+
+    # 检查 L1 是否已写
+    l1_path = automation.l1_writer._get_l1_path(date_str)
+    if l1_path.exists():
+        try:
+            content = l1_path.read_text(encoding='utf-8')
+            if len(content.strip()) > 50:
+                print(f"[distill-l1] {date_str} L1 已存在，跳过")
+                return {"status": "skipped", "reason": "l1_exists", "date": date_str}
+        except:
+            pass
+
+    # 读 clean_session
+    try:
+        with open(clean_file, 'r', encoding='utf-8') as f:
+            messages = json.load(f)
+    except Exception as e:
+        print(f"[distill-l1] 读 clean_session 失败: {e}")
+        return {"status": "error", "reason": str(e), "date": date_str}
+
+    if not messages:
+        print(f"[distill-l1] {date_str} clean_session 为空，跳过")
+        return {"status": "skipped", "reason": "empty_clean_session", "date": date_str}
+
+    # 输出结构化内容
+    user_msgs = [m for m in messages if m.get("r") == "u"]
+    asst_msgs = [m for m in messages if m.get("r") == "a"]
+
+    print(f"\n📋 [distill-l1] agent '{agent_id}' — {date_str}")
+    print("━" * 50)
+    print(f"昨日对话: {len(user_msgs)} 条用户消息, {len(asst_msgs)} 条助手回复")
+    print(f"目标 L1 文件: {l1_path}")
+    print()
+    print("【对话摘要】")
+    for i, msg in enumerate(messages, 1):
+        role = "用户" if msg.get("r") == "u" else "助手"
+        content = msg.get("c", "")
+        # 从时间戳提取 HH:MM（保留原时间方便核对）
+        ts = msg.get("t", "")
+        hhmm = ""
+        if "T" in ts:
+            try:
+                hhmm = ts[11:16]
+            except:
+                pass
+        time_tag = f"[{hhmm}] " if hhmm else ""
+        # 内容过长时截断显示，但标注总长度
+        display = content[:600]
+        print(f"[{i}] {time_tag}{role}: {display}")
+        if len(content) > 600:
+            print(f"     ...（共 {len(content)} 字符，已截断显示）")
+
+    print()
+    print("【蒸馏规则】")
+    print("关键规则（必须遵守）：")
+    print("  1. SelfEvolve 是所有纠正和知识的入口 — 用户反馈/知识先写这里")
+    print("  2. 纠正升级（7天计数制）：先读近7天L1的SelfEvolve+RuleDecision查次数")
+    print("     第1次→SelfEvolve(完整)｜第2次→RuleDecision(完整)+SelfEvolve(摘要+次数)")
+    print("     第3+次→如果纠正内容进化，更新RuleDecision为新版本+SelfEvolve记"规则更新"")
+    print("  3. 知识分流：系统/工具/组织→SocialEcology｜个人/通用→SelfEvolve")
+    print("  4. 只记一次原则：同一内容只出现一个分类")
+    print()
+    print("读取近7天L1示例：")
+    print("  from pathlib import Path")
+    print(f"  l1_dir = Path('{l1_path.parent}')")
+    print("  for f in sorted(l1_dir.glob('*-*-*.md'))[-7:]:")
+    print("      content = f.read_text()")
+    print("      # 检查 SelfEvolve/RuleDecision 段落中是否有匹配的纠正主题")
+    print()
+    print("【6 分类速查】")
+    print("  RuleDecision — 经≥2次纠正升级的硬性规范")
+    print("  SelfEvolve — 纠正/知识/偏好的入口（第1次纠正写这里）")
+    print("  SocialEcology — 客观环境：角色/渠道/协作/系统功能")
+    print("  To-do — 承诺/搁置/备忘")
+    print("  Output — 已完成有明确结果的事项")
+    print("  Event — 兜底：以上都不符的事实")
+    print()
+    print("【写入前自检】")
+    print("  □ 近7天L1查了纠正次数？")
+    print("  □ 纠正够2次要升RuleDecision？")
+    print("  □ SocialEcology有漏？（角色/渠道/系统知识）")
+    print("  □ To-do/Output有漏？（搁置/完成事项）")
+    print("  □ 近3天L1有重复？（有则引用不写全文）")
+    print("  □ 每条≤100字，带source")
+    print()
+    print("写入方法：")
+    print(f"  from memory.l1_writer import L1Writer")
+    print(f"  writer = L1Writer(\"{agent_id}\")")
+    print(f"  writer.write(entries, \"{date_str}\")")
+    print(f"  # entries = [{{'event_type': 'Event', 'content': '...'}}, ...]")
+    print(f"  # 分类: RuleDecision / SelfEvolve / SocialEcology / To-do / Output / Event")
+    print()
+    print("写入后请回复【蒸馏完成】")
+    print()
+
+    return {
+        "status": "ok",
+        "date": date_str,
+        "message_count": len(messages),
+        "user_count": len(user_msgs),
+        "asst_count": len(asst_msgs),
+    }
+
+
 def _handle_l2_command(args: list) -> dict:
     """
     处理 L2 相关子命令
@@ -1237,9 +1393,11 @@ def main():
     if len(sys.argv) < 2:
         print("用法: python -m memory.automation <命令> [选项]")
         print("")
-        print("L1 记忆管理（原有）：")
-        print("  manual    - 手动触发记忆蒸馏")
-        print("  heartbeat - Heartbeat 触发记忆蒸馏")
+        print("L1 记忆管理：")
+        print("  manual    - 手动触发 session 清洗")
+        print("  heartbeat - Heartbeat 触发 session 清洗")
+        print("  distill-l1 --agent <id> [--date YYYY-MM-DD] - 输出昨日对话供 agent 写 L1")
+        print("  setup     - per-agent 运行环境检查")
         print("  old-session <key> - 处理已 reset 的旧 session")
         print("")
         print("L2 自我改进层：")
@@ -1258,6 +1416,7 @@ def main():
         print("示例:")
         print("  python -m memory.automation manual --agent code")
         print("  python -m memory.automation heartbeat --agent xiaoxian")
+        print("  python -m memory.automation setup --agent mautoer")
         print("  python -m memory.automation l2 correct --agent code --content \"纠正内容\" --source binary")
         print("  python -m memory.automation l3 promote --agent code --dry-run")
         sys.exit(1)
@@ -1293,6 +1452,7 @@ def main():
         print(f"\n[结果] {result['reason']}")
         if result.get('error') == 'agent_id_required':
             print(f"[错误] 请在调用时添加 --agent 参数")
+            automation.logger.log("manual", "error", "缺少 --agent 参数")
             sys.exit(1)
         if result['triggered']:
             print(f"  - 保存文件: {result['saved_count']}")
@@ -1301,6 +1461,9 @@ def main():
                     print(f"    📁 {p}")
             if result.get('session_key'):
                 print(f"  - Session: {result['session_key']}")
+            automation.logger.log("manual", "ok", f"保存 {result['saved_count']} 个文件, session={result.get('session_key', 'N/A')}")
+        else:
+            automation.logger.log("manual", "ok", result['reason'])
 
     elif mode == "old-session":
         # 处理已 reset 的旧 session
@@ -1322,10 +1485,14 @@ def main():
         if result.get('activation_needed'):
             print(f"\n[MemoryAutomation] {result['reason']}")
             print(f"[MemoryAutomation] 请在 HEARTBEAT.md 中添加 --agent 参数")
+            automation.logger.log("heartbeat", "error", result['reason'])
         elif result['triggered'] and result.get('saved_count', 0) > 0:
             print(f"\n[MemoryAutomation] 保存 {result['saved_count']} 个 clean_session 文件")
+            automation.logger.log("heartbeat", "ok", f"保存 {result['saved_count']} 个 clean_session 文件")
         else:
             print(f"\n[结果] {result['reason']}")
+            status = "ok" if not result.get('error') else "error"
+            automation.logger.log("heartbeat", status, result['reason'])
     
     elif mode == "process-backlog":
         # 处理积压的历史 session
@@ -1358,10 +1525,42 @@ def main():
             print("已处理文件:")
             for item in result["processed"]:
                 print(f"  ✓ {item['file']} ({item['saved_count']} 个文件)")
+        
+        # 记录日志
+        detail = f"处理完成: {processed} 成功, {skipped} 跳过, {errors} 错误"
+        status = "ok" if errors == 0 else "warning"
+        automation.logger.log("process-backlog", status, detail)
     
+    elif mode == "distill-l1" or mode == "distill":
+        # distill-l1 模式：输出昨日 clean_session 供 agent 写 L1
+        date_str = None
+        for i in range(2, len(sys.argv)):
+            if sys.argv[i] == "--date" and i + 1 < len(sys.argv):
+                date_str = sys.argv[i + 1]
+        distill_result = _handle_distill_l1(automation, date_str)
+        if distill_result.get("status") == "ok":
+            report_date = date_str or "昨天"
+            automation.logger.log("distill-l1", "ok", f"{report_date}: {distill_result.get('message_count', 0)} 条对话")
+        elif distill_result.get("status") == "skipped":
+            report_date = date_str or "昨天"
+            automation.logger.log("distill-l1", "skipped", f"{report_date}: {distill_result.get('reason', '')}")
+        else:
+            automation.logger.log("distill-l1", "error", str(distill_result.get("reason", "")))
+        result = distill_result
+    
+    elif mode == "setup":
+        # per-agent 配置检查
+        setup_result = run_setup(agent_id)
+        # setup_checker 内部已打印报告，这里只记录日志
+        if automation and hasattr(automation, 'logger'):
+            detail = f"{setup_result['passed']}/{setup_result['total']} 项就绪"
+            status = "ok" if setup_result['failed'] == 0 else "warning"
+            automation.logger.log("setup", status, detail)
+        result = setup_result
+
     else:
         print(f"错误: 未知模式 '{mode}'")
-        print("用法: python -m memory.automation [manual|heartbeat|l2|process-backlog]")
+        print("用法: python -m memory.automation [manual|heartbeat|distill-l1|setup|l2|process-backlog]")
         sys.exit(1)
 
     # 输出 JSON 结果（供调用方解析）

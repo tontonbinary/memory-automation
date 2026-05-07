@@ -23,9 +23,9 @@ class L1Writer:
         "Event",
     ]
 
-    def __init__(self, agent_id: str, config: Dict[str, Any]):
+    def __init__(self, agent_id: str, config: Optional[Dict[str, Any]] = None):
         self.agent_id = agent_id
-        self.config = config
+        self.config = config or {}
 
     def _get_l1_path(self, date_str: str = None, suffix: str = "") -> Path:
         """获取 L1 文件路径"""

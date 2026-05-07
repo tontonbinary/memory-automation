@@ -7,19 +7,19 @@
 
 ## 1. Agent 启动时加载记忆
 
-### 1.1 加载 L1 标签（最近 3 天）
+### 1.1 加载 L1 标签（最近 2 天）
 ```python
 from memory.l1_reader import L1Reader
 
 l1_reader = L1Reader(agent_id, config)
-recent_l1 = l1_reader.load_recent(days=3)
+recent_l1 = l1_reader.load_recent(days=2)
 ```
 
 ---
 
 ## 2. Heartbeat 触发（自动执行）
 
-Mauto Heartbeat 现在只做一件事：**保存 clean_session**
+Mauto Heartbeat 只做一件事：**保存 clean_session**
 
 ```
 Step 1: Session Switch (无条件)
@@ -28,30 +28,38 @@ Step 1: Session Switch (无条件)
 Step 2: 积压处理 (无条件)
   └─ 检查积压的历史 session → 每心跳处理 1 个积压
 
-Step 3: 凌晨总结提醒 (03:00-04:00)
-  └─ 检查前一日 clean_session 是否已写入 L1 → 未写则提醒
+Step 3: 配置自检 (每天一次)
+  └─ 检查凌晨 L1 蒸馏 cron 是否存在 → 缺则提醒 agent 创建
 
 Step 4: Active Session (条件: 不在静默时段)
   └─ 处理当前 session 的新消息 → 清洗 → 保存 clean_session
 ```
 
-**不再做的事情**：
-- ❌ 不再调用 LLM API 蒸馏
-- ❌ 不再自动写入 L1
-- ❌ 不再触发 L3 Auto-Dream
+## 3. 凌晨 L1 蒸馏（cron 触发）
+
+凌晨 3:00-4:00 由 cron 触发 `distill-l1` 命令：
+
+```
+Cron 3:15 → 发消息到 agent
+  └─ agent 执行 distill-l1 命令
+      ├─ 读前一日 clean_session → 无对话则静默跳过
+      ├─ 读前一日 L1 → 已写则跳过
+      └─ 输出对话摘要 + L1 分类模板 → agent 写 L1
+```
+
+**次日后安全网**：心跳自检发现缺 L1 时有 clean_session → 提醒 agent 补写。
 
 ---
 
-## 3. Agent 自主总结 L1（新增）
+## 4. Agent 自主总结 L1
 
-### 3.1 何时总结
+### 4.1 何时总结
 
 Agent **应当**在以下时机主动总结并写入 L1：
-- 每次 session 结束前
+- **每天凌晨 3:15 cron 触发 distill-l1 时**（主要时机）
 - 用户说"总结一下今天"
 - 用户说"记一下"
 - Agent 认为有重要内容需要记录时
-- **每天凌晨 03:00-04:00 收到 heartbeat 提醒时**
 
 ### 3.2 读取 clean_session
 
@@ -159,6 +167,8 @@ l1_files = Path("memory/").glob("2026-04-28*.md")
 
 ## 5. clean_session 规范
 
+## 5. clean_session 规范
+
 ### 文件位置
 - **目录**: `~/.openclaw/agents/{agent_id}/clean_session/`
 - **文件名**: `{YYYY-MM-DD}.json`（每天一个文件，追加模式）
@@ -184,17 +194,45 @@ l1_files = Path("memory/").glob("2026-04-28*.md")
 # Heartbeat（只保存 clean_session）
 python -m memory.automation heartbeat --agent {agent_id}
 
-# 手动触发（只保存 clean_session）
+# 手动触发 session 清洗
 python -m memory.automation manual --agent {agent_id}
+
+# 输出昨日对话摘要供 agent 写 L1（凌晨 cron 调用）
+python -m memory.automation distill-l1 --agent {agent_id}
+python -m memory.automation distill-l1 --agent {agent_id} --date 2026-05-06
+
+# per-agent 运行环境检查
+python -m memory.automation setup --agent {agent_id}
 
 # 处理积压 session
 python -m memory.automation process-backlog --agent {agent_id}
 
-# L2 管理（保持不变）
+# L2 管理
 python -m memory.automation l2 correct --agent {agent_id} --topic "..." --wrong "..." --correct "..."
 python -m memory.automation l2 process --agent {agent_id}
 python -m memory.automation l2 status --agent {agent_id}
 ```
+
+### setup - per-agent 运行环境检查
+
+```bash
+python -m memory.automation setup --agent {agent_id}
+```
+
+检查 Mauto 自身文件：
+- heartbeat-state.json 是否存在
+- HEARTBEAT.md 内容是否完整
+- 凌晨 L1 蒸馏 cron job 是否存在（可选）
+- 运行日志是否可写
+
+每项输出 ✅/❌/ℹ️，缺失项附详细修复指引。只检查、不自动修复。
+
+### 运行日志
+
+每次 heartbeat、manual、setup 和 process-backlog 的执行记录会自动保存到：
+`~/.openclaw/agents/{agent_id}/memory-automation.log`
+
+日志为 JSONL 格式，每行一条记录，保留最近 1000 行。
 
 ---
 
@@ -224,9 +262,3 @@ python -m memory.automation l2 status --agent {agent_id}
     "enabled": true
   }
 }
-```
-
-**已移除的配置**：
-- ❌ `llm` - 不再需要 LLM API
-- ❌ `distillation` - 不再需要蒸馏
-- ❌ `agent_self_distill` - 不再需要
