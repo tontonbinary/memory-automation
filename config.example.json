@@ -20,7 +20,6 @@
   ],
   "heartbeat_interval_minutes": 360,
   "state_file": "memory/heartbeat-state.json",
-  "memory_rules": "~/.openclaw/memory-rules.md",
   "min_message_length": 10,
   "l1_history_days": 7,
   "pattern_threshold": 3,
@@ -62,8 +61,7 @@
   "paths": {
     "l1_template": "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md",
     "l2_dir": "~/.openclaw/workspaces/{agent}/workspace/memory/L2",
-    "state_file": "memory/heartbeat-state.json",
-    "memory_rules": "~/.openclaw/memory-rules.md"
+    "state_file": "memory/heartbeat-state.json"
   },
   "distillation": {
     "extract_types": [

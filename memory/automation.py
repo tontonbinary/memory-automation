@@ -163,7 +163,6 @@ class MemoryAutomation:
             "pattern_keywords": ["我喜欢", "我希望", "我觉得", "以后都", "我想要", "忘了吗"],
             "heartbeat_interval_minutes": 30,
             "state_file": "memory/heartbeat-state.json",
-            "memory_rules": "~/.openclaw/memory-rules.md",
             "min_message_length": 10,
             # L1 历史搜索配置
             "l1_history_days": 7,  # 搜索最近7天的历史
@@ -1220,7 +1219,7 @@ def _handle_distill_l1(automation: MemoryAutomation, date_str: Optional[str] = N
     print("  1. SelfEvolve 是所有纠正和知识的入口 — 用户反馈/知识先写这里")
     print("  2. 纠正升级（7天计数制）：先读近7天L1的SelfEvolve+RuleDecision查次数")
     print("     第1次→SelfEvolve(完整)｜第2次→RuleDecision(完整)+SelfEvolve(摘要+次数)")
-    print("     第3+次→如果纠正内容进化，更新RuleDecision为新版本+SelfEvolve记"规则更新"")
+    print("     第3+次→如果纠正内容进化，更新RuleDecision为新版本+SelfEvolve记'规则更新'")
     print("  3. 知识分流：系统/工具/组织→SocialEcology｜个人/通用→SelfEvolve")
     print("  4. 只记一次原则：同一内容只出现一个分类")
     print()
