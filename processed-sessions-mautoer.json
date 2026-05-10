@@ -31,6 +31,24 @@
       "processed_time": "2026-05-10T14:46:48.436198",
       "msg_count": 1,
       "saved_count": 1
+    },
+    "/Users/binary/.openclaw/agents/mautoer/sessions/1bdfb1d4-d612-4b05-a582-5a4f002eb822.jsonl.reset.2026-05-10T00-58-53.741Z": {
+      "file": "/Users/binary/.openclaw/agents/mautoer/sessions/1bdfb1d4-d612-4b05-a582-5a4f002eb822.jsonl.reset.2026-05-10T00-58-53.741Z",
+      "processed_time": "2026-05-10T15:14:35.872033",
+      "msg_count": 1,
+      "saved_count": 1
+    },
+    "/Users/binary/.openclaw/agents/mautoer/sessions/9b5e3cf0-4ae4-46ee-a5a6-174032e5daae.jsonl.reset.2026-05-09T00-35-24.936Z": {
+      "file": "/Users/binary/.openclaw/agents/mautoer/sessions/9b5e3cf0-4ae4-46ee-a5a6-174032e5daae.jsonl.reset.2026-05-09T00-35-24.936Z",
+      "processed_time": "2026-05-10T15:14:35.881361",
+      "msg_count": 1,
+      "saved_count": 1
+    },
+    "/Users/binary/.openclaw/agents/mautoer/sessions/36bb1b71-b6b8-4788-9f23-eb83b15593c4.jsonl.reset.2026-05-07T20-41-47": {
+      "file": "/Users/binary/.openclaw/agents/mautoer/sessions/36bb1b71-b6b8-4788-9f23-eb83b15593c4.jsonl.reset.2026-05-07T20-41-47",
+      "processed_time": "2026-05-10T15:14:35.882620",
+      "msg_count": 0,
+      "saved_count": 0
     }
   },
   "skipped": {
@@ -200,7 +218,39 @@
       "file": "/Users/binary/.openclaw/agents/mautoer/sessions/9b5e3cf0-4ae4-46ee-a5a6-174032e5daae.trajectory.jsonl",
       "skipped_time": "2026-05-10T14:46:48.507690",
       "reason": "处理失败: session 文件中没有有效消息"
+    },
+    "/Users/binary/.openclaw/agents/mautoer/sessions/fb878d47-0b03-4c54-a077-8eba4606596d.jsonl.reset.2026-05-10T01-38-16.798Z": {
+      "file": "/Users/binary/.openclaw/agents/mautoer/sessions/fb878d47-0b03-4c54-a077-8eba4606596d.jsonl.reset.2026-05-10T01-38-16.798Z",
+      "skipped_time": "2026-05-10T15:14:35.861174",
+      "reason": "消息太少",
+      "mtime": 1778337236.6252015,
+      "size": 14524,
+      "line_count": 19
+    },
+    "/Users/binary/.openclaw/agents/mautoer/sessions/00e3bcac-d1b4-4211-b65a-279b253493ce.jsonl.reset.2026-05-07T04-06-55.289Z": {
+      "file": "/Users/binary/.openclaw/agents/mautoer/sessions/00e3bcac-d1b4-4211-b65a-279b253493ce.jsonl.reset.2026-05-07T04-06-55.289Z",
+      "skipped_time": "2026-05-10T15:14:35.861407",
+      "reason": "文件太旧",
+      "mtime": 1778126762.5767894,
+      "size": 2580,
+      "line_count": 7
+    },
+    "/Users/binary/.openclaw/agents/mautoer/sessions/1d92a70b-fb13-42f3-9dd9-9d6d5fc6fe13.jsonl.reset.2026-05-07T04-05-39.098Z": {
+      "file": "/Users/binary/.openclaw/agents/mautoer/sessions/1d92a70b-fb13-42f3-9dd9-9d6d5fc6fe13.jsonl.reset.2026-05-07T04-05-39.098Z",
+      "skipped_time": "2026-05-10T15:14:35.861632",
+      "reason": "文件太旧",
+      "mtime": 1778126712.977168,
+      "size": 160024,
+      "line_count": 72
+    },
+    "/Users/binary/.openclaw/agents/mautoer/sessions/31c11610-9afd-4212-a812-1d5859bb63c2.jsonl.reset.2026-05-07T01-50-23.283Z": {
+      "file": "/Users/binary/.openclaw/agents/mautoer/sessions/31c11610-9afd-4212-a812-1d5859bb63c2.jsonl.reset.2026-05-07T01-50-23.283Z",
+      "skipped_time": "2026-05-10T15:14:35.861853",
+      "reason": "文件太旧",
+      "mtime": 1777995942.66624,
+      "size": 16770,
+      "line_count": 30
     }
   },
-  "last_scan_time": "2026-05-10T14:46:54.249056"
+  "last_scan_time": "2026-05-10T15:14:35.860811"
 }

@@ -113,7 +113,12 @@ class ProcessedSessionsTracker:
         
         unprocessed = []
         
-        for jsonl_file in sessions_dir.glob("*.jsonl"):
+        # 扫描所有 session 文件（包括 reset 的）
+        all_session_files = []
+        for pattern in ["*.jsonl", "*.jsonl.reset.*", "*.jsonl.bak"]:
+            all_session_files.extend(sessions_dir.glob(pattern))
+        
+        for jsonl_file in all_session_files:
             # 从文件名提取 session_key（假设格式为 {session_id}.jsonl）
             session_id = jsonl_file.stem
             # 构建完整的 session_key（需要与 openclaw 格式一致）
