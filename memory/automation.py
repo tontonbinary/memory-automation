@@ -923,6 +923,13 @@ clean_session 已存在：{yesterday_clean_file}
             backlog_result = self._check_and_process_backlog()
             if backlog_result:
                 result["backlog_processed"] = backlog_result
+            
+            # 检查前一日 L1 是否需要补写（安全网）
+            daily_summary = self._check_daily_summary()
+            if daily_summary:
+                print(daily_summary)
+                result["daily_summary"] = daily_summary
+                result["needs_attention"] = True
         
         # ===== 第三步：检查活跃 session 处理间隔 =====
         interval = self.config.get("heartbeat_interval_minutes", 360)
