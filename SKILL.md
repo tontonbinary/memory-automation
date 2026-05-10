@@ -38,7 +38,14 @@ Step 3: 配置自检 (每天一次)
 4. 如果缺失 → 输出提醒：
    ```
    ⚠️ 凌晨 L1 蒸馏 cron 未配置
-   建议执行：openclaw cron add --command "distill-l1 --agent {agent_id}" --schedule "0 15 3 * * *"
+
+   请创建一个每天凌晨 3:00-4:00 的 cron 任务：
+   - 任务：运行 distill-l1 命令，蒸馏昨日 clean session 生成 L1
+   - 要求：使用 isolated session + light context，减少 token 消耗
+   - 注意：delivery 必须指定你的 channel 和 account，不能用 "last"
+
+   示例（请按你的实际 channel/account 修改）：
+   openclaw cron add --name "xxx-l1-distill" --agent xxx --channel <你的channel> --account <你的account> --cron "15 3 * * *" --session isolated --light-context --message "distill-l1 命令"
    ```
 5. 如果存在但时间不在 3:00-4:00 窗口 → 提示调整
 
