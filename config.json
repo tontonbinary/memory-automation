@@ -61,7 +61,7 @@
   "paths": {
     "l1_template": "~/.openclaw/workspaces/{agent}/workspace/memory/{date}.md",
     "state_file": "memory/heartbeat-state.json",
-    "l2_dir": "~/.openclaw/workspaces/{agent}/workspace/memory/L2",
+    "l2_dir": "~/.openclaw/workspaces/{agent}/workspace/memory/L2"
   },
   "l2": {
     "enabled": true,
